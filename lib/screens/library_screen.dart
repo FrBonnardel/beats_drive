@@ -1,315 +1,290 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:beats_drive/providers/audio_provider.dart';
-import 'package:beats_drive/providers/music_provider.dart';
-import 'package:beats_drive/services/music_scanner_service.dart';
-import 'package:beats_drive/services/cache_service.dart';
+import '../providers/music_provider.dart';
+import '../providers/audio_provider.dart';
+import '../services/metadata_service.dart';
+import 'dart:math';
 
 class LibraryScreen extends StatefulWidget {
-  const LibraryScreen({super.key});
+  const LibraryScreen({Key? key}) : super(key: key);
 
   @override
   State<LibraryScreen> createState() => _LibraryScreenState();
 }
 
 class _LibraryScreenState extends State<LibraryScreen> {
+  final TextEditingController _searchController = TextEditingController();
+  List<String> _filteredFiles = [];
+  Map<String, Map<String, dynamic>> _metadataCache = {};
+
   @override
   void initState() {
     super.initState();
-    // Request permissions, clear cache, and scan music on launch
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      final musicProvider = Provider.of<MusicProvider>(context, listen: false);
-      final audioProvider = Provider.of<AudioProvider>(context, listen: false);
-      
-      // Request storage permission
-      final hasPermission = await MusicScannerService.requestStoragePermission();
-      if (hasPermission) {
-        // Clear cache on first launch
-        await CacheService.clearCache();
-        // Scan for music files
-        await musicProvider.scanMusicFiles();
-        if (musicProvider.musicFiles.isNotEmpty) {
-          audioProvider.updatePlaylist(musicProvider.musicFiles);
+    _loadMetadataForLibrary();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadMetadataForLibrary() async {
+    final musicProvider = Provider.of<MusicProvider>(context, listen: false);
+    for (final filePath in musicProvider.musicFiles) {
+      if (!_metadataCache.containsKey(filePath)) {
+        final metadata = await MetadataService.getMetadata(filePath);
+        if (mounted) {
+          setState(() {
+            _metadataCache[filePath] = metadata;
+          });
         }
       }
-    });
+    }
+  }
+
+  void _filterFiles(String query) {
+    final musicProvider = Provider.of<MusicProvider>(context, listen: false);
+    if (query.isEmpty) {
+      setState(() {
+        _filteredFiles = musicProvider.musicFiles;
+      });
+    } else {
+      setState(() {
+        _filteredFiles = musicProvider.musicFiles.where((filePath) {
+          final metadata = _metadataCache[filePath] ?? {};
+          final title = metadata['title'] as String? ?? filePath.split('/').last;
+          final artist = metadata['artist'] as String? ?? '';
+          final album = metadata['album'] as String? ?? '';
+          
+          return title.toLowerCase().contains(query.toLowerCase()) ||
+                 artist.toLowerCase().contains(query.toLowerCase()) ||
+                 album.toLowerCase().contains(query.toLowerCase());
+        }).toList();
+      });
+    }
+  }
+
+  Future<void> _showRescanConfirmation() async {
+    return showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Rescan Music Library'),
+        content: const Text('This will scan your device for music files. This may take a few minutes. Continue?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(context);
+              final musicProvider = Provider.of<MusicProvider>(context, listen: false);
+              musicProvider.scanMusicFiles(forceRescan: true);
+            },
+            child: const Text('Rescan'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _playRandom() {
+    final musicProvider = Provider.of<MusicProvider>(context, listen: false);
+    if (musicProvider.musicFiles.isEmpty) return;
+
+    final random = Random();
+    final randomIndex = random.nextInt(musicProvider.musicFiles.length);
+    final audioProvider = Provider.of<AudioProvider>(context, listen: false);
+    audioProvider.updatePlaylist(musicProvider.musicFiles);
+    audioProvider.selectSong(randomIndex);
   }
 
   @override
   Widget build(BuildContext context) {
-    return Consumer2<AudioProvider, MusicProvider>(
-      builder: (context, audioProvider, musicProvider, child) {
-        return Scaffold(
-          appBar: AppBar(
-            title: const Text('Music Library'),
-            actions: [
-              IconButton(
-                key: const ValueKey('shuffle_play_button'),
-                icon: const Icon(Icons.shuffle),
-                tooltip: 'Play all randomly',
-                onPressed: () {
-                  if (audioProvider.playlist.isNotEmpty) {
-                    audioProvider.toggleShuffle();
-                    audioProvider.selectSong(0);
-                    audioProvider.play();
-                  }
-                },
-              ),
-              IconButton(
-                key: const ValueKey('refresh_button'),
-                icon: const Icon(Icons.refresh),
-                onPressed: () async {
-                  await musicProvider.scanMusicFiles();
-                  if (musicProvider.musicFiles.isNotEmpty) {
-                    audioProvider.updatePlaylist(musicProvider.musicFiles);
-                  }
-                },
-              ),
-              IconButton(
-                key: const ValueKey('search_button'),
-                icon: const Icon(Icons.search),
-                onPressed: () {
-                  showSearch(
-                    context: context,
-                    delegate: MusicSearchDelegate(audioProvider),
-                  );
-                },
-              ),
-            ],
-          ),
-          body: musicProvider.isScanning
-              ? Stack(
-                  children: [
-                    const Center(
-                      child: CircularProgressIndicator(),
-                    ),
-                    Positioned(
-                      top: MediaQuery.of(context).size.height * 0.6,
-                      left: 0,
-                      right: 0,
-                      child: Center(
-                        child: Text(
-                          'Found ${musicProvider.musicFiles.length} music files',
-                          style: Theme.of(context).textTheme.titleMedium,
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Library'),
+        actions: [
+          Consumer<MusicProvider>(
+            builder: (context, musicProvider, child) {
+              if (musicProvider.isScanning) {
+                return Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Theme.of(context).colorScheme.onPrimary,
+                          ),
                         ),
                       ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '${musicProvider.processedFiles}/${musicProvider.totalFiles}',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.onPrimary,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }
+              return IconButton(
+                icon: const Icon(Icons.refresh),
+                onPressed: _showRescanConfirmation,
+              );
+            },
+          ),
+        ],
+      ),
+      body: Consumer<MusicProvider>(
+        builder: (context, musicProvider, child) {
+          if (musicProvider.error.isNotEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    musicProvider.error,
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: Colors.red,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: _showRescanConfirmation,
+                    child: const Text('Retry'),
+                  ),
+                ],
+              ),
+            );
+          }
+
+          if (musicProvider.musicFiles.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text('No music files found'),
+                  if (musicProvider.isScanning) ...[
+                    const SizedBox(height: 16),
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 8),
+                    Text(
+                      musicProvider.currentStatus,
+                      style: Theme.of(context).textTheme.bodyMedium,
                     ),
                   ],
-                )
-              : musicProvider.error.isNotEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            musicProvider.error,
-                            style: const TextStyle(color: Colors.red),
-                            textAlign: TextAlign.center,
+                ],
+              ),
+            );
+          }
+
+          // Initialize filtered files if empty
+          if (_filteredFiles.isEmpty) {
+            _filteredFiles = musicProvider.musicFiles;
+          }
+
+          return Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _searchController,
+                        decoration: InputDecoration(
+                          hintText: 'Search music...',
+                          prefixIcon: const Icon(Icons.search),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
                           ),
-                          const SizedBox(height: 16),
-                          ElevatedButton(
-                            key: const ValueKey('retry_button'),
-                            onPressed: () {
-                              musicProvider.scanMusicFiles();
-                            },
-                            child: const Text('Retry'),
-                          ),
-                        ],
+                        ),
+                        onChanged: _filterFiles,
                       ),
-                    )
-                  : ListView.builder(
-                      padding: const EdgeInsets.all(16),
-                      itemCount: audioProvider.playlist.length,
-                      itemBuilder: (context, index) {
-                        final filePath = audioProvider.playlist[index];
-                        final fileName = filePath.split('/').last;
-                        final isPlaying = index == audioProvider.currentIndex;
-
-                        return Card(
-                          key: ValueKey('song_card_$index'),
-                          margin: const EdgeInsets.only(bottom: 8),
-                          child: ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: Theme.of(context).colorScheme.primary,
-                              child: Text(
-                                fileName.isNotEmpty ? fileName[0] : '?',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                            title: Text(
-                              fileName,
-                              style: TextStyle(
-                                fontWeight: isPlaying ? FontWeight.bold : FontWeight.normal,
-                                color: isPlaying
-                                    ? Theme.of(context).colorScheme.primary
-                                    : null,
-                              ),
-                            ),
-                            subtitle: Text(filePath),
-                            trailing: IconButton(
-                              key: ValueKey('more_button_$index'),
-                              icon: const Icon(Icons.more_vert),
-                              onPressed: () {
-                                _showSongOptions(context, audioProvider, index);
-                              },
-                            ),
-                            onTap: () {
-                              audioProvider.selectSong(index);
-                            },
-                          ),
-                        );
-                      },
                     ),
-        );
-      },
-    );
-  }
+                    const SizedBox(width: 8),
+                    FilledButton.icon(
+                      onPressed: _playRandom,
+                      icon: const Icon(Icons.shuffle),
+                      label: const Text('Random'),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: _filteredFiles.length,
+                  itemBuilder: (context, index) {
+                    final filePath = _filteredFiles[index];
+                    final metadata = _metadataCache[filePath] ?? {};
+                    final title = metadata['title'] as String? ?? filePath.split('/').last;
+                    final artist = metadata['artist'] as String? ?? 'Unknown Artist';
+                    final album = metadata['album'] as String? ?? '';
+                    final albumArt = metadata['albumArt'];
 
-  void _showSongOptions(BuildContext context, AudioProvider audioProvider, int index) {
-    showModalBottomSheet(
-      context: context,
-      builder: (context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                key: const ValueKey('add_to_playlist_option'),
-                leading: const Icon(Icons.playlist_add),
-                title: const Text('Add to Playlist'),
-                onTap: () {
-                  Navigator.pop(context);
-                  // TODO: Implement add to playlist
-                },
-              ),
-              ListTile(
-                key: const ValueKey('add_to_favorites_option'),
-                leading: const Icon(Icons.favorite_border),
-                title: const Text('Add to Favorites'),
-                onTap: () {
-                  Navigator.pop(context);
-                  // TODO: Implement add to favorites
-                },
-              ),
-              ListTile(
-                key: const ValueKey('song_info_option'),
-                leading: const Icon(Icons.info_outline),
-                title: const Text('Song Info'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _showSongInfo(context, audioProvider.playlist[index]);
-                },
+                    return Card(
+                      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      child: ListTile(
+                        leading: albumArt != null
+                            ? ClipRRect(
+                                borderRadius: BorderRadius.circular(4),
+                                child: Image.memory(
+                                  albumArt,
+                                  width: 56,
+                                  height: 56,
+                                  fit: BoxFit.cover,
+                                ),
+                              )
+                            : const CircleAvatar(
+                                child: Icon(Icons.music_note),
+                              ),
+                        title: Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              artist,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            if (album.isNotEmpty)
+                              Text(
+                                album,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                          ],
+                        ),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.play_circle_outline),
+                          onPressed: () {
+                            final audioProvider = Provider.of<AudioProvider>(context, listen: false);
+                            audioProvider.updatePlaylist(musicProvider.musicFiles);
+                            audioProvider.selectSong(musicProvider.musicFiles.indexOf(filePath));
+                          },
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ),
             ],
-          ),
-        );
-      },
-    );
-  }
-
-  void _showSongInfo(BuildContext context, String filePath) {
-    final fileName = filePath.split('/').last;
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Song Information'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Title: $fileName'),
-              const SizedBox(height: 8),
-              Text('Path: $filePath'),
-              const SizedBox(height: 8),
-              const Text('Duration: 3:45'), // TODO: Add actual duration
-              const SizedBox(height: 8),
-              const Text('Genre: Local Music'), // TODO: Add actual genre
-            ],
-          ),
-          actions: [
-            TextButton(
-              key: const ValueKey('close_dialog_button'),
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Close'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class MusicSearchDelegate extends SearchDelegate<String> {
-  final AudioProvider audioProvider;
-
-  MusicSearchDelegate(this.audioProvider);
-
-  @override
-  List<Widget> buildActions(BuildContext context) {
-    return [
-      IconButton(
-        key: const ValueKey('clear_search_button'),
-        icon: const Icon(Icons.clear),
-        onPressed: () {
-          query = '';
+          );
         },
       ),
-    ];
-  }
-
-  @override
-  Widget buildLeading(BuildContext context) {
-    return IconButton(
-      key: const ValueKey('back_button'),
-      icon: const Icon(Icons.arrow_back),
-      onPressed: () {
-        close(context, '');
-      },
-    );
-  }
-
-  @override
-  Widget buildResults(BuildContext context) {
-    return _buildSearchResults();
-  }
-
-  @override
-  Widget buildSuggestions(BuildContext context) {
-    return _buildSearchResults();
-  }
-
-  Widget _buildSearchResults() {
-    audioProvider.setSearchQuery(query);
-    return ListView.builder(
-      itemCount: audioProvider.playlist.length,
-      itemBuilder: (context, index) {
-        final filePath = audioProvider.playlist[index];
-        final fileName = filePath.split('/').last;
-
-        return ListTile(
-          key: ValueKey('search_result_$index'),
-          leading: CircleAvatar(
-            backgroundColor: Theme.of(context).colorScheme.primary,
-            child: Text(
-              fileName.isNotEmpty ? fileName[0] : '?',
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          title: Text(fileName),
-          subtitle: Text(filePath),
-          onTap: () {
-            audioProvider.selectSong(index);
-            close(context, fileName);
-          },
-        );
-      },
     );
   }
 } 

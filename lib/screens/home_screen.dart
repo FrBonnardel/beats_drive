@@ -15,48 +15,66 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
+  final Map<int, Widget> _screens = {};
 
-  final List<Widget> _screens = [
-    const LibraryScreen(),
-    const PlayerScreen(),
-    const PlaylistScreen(),
-  ];
+  Widget _getScreen(int index) {
+    if (!_screens.containsKey(index)) {
+      switch (index) {
+        case 0:
+          _screens[index] = const LibraryScreen();
+          break;
+        case 1:
+          _screens[index] = const PlayerScreen();
+          break;
+        case 2:
+          _screens[index] = const PlaylistScreen();
+          break;
+      }
+    }
+    return _screens[index]!;
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Stack(
         children: [
-          _screens[_selectedIndex],
-          const Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: MiniPlayer(),
-          ),
+          _getScreen(_selectedIndex),
+          if (_selectedIndex != 1) // Hide MiniPlayer on Player screen (index 1)
+            const Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: MiniPlayer(),
+            ),
         ],
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) {
-          setState(() {
-            _selectedIndex = index;
-          });
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.library_music),
-            label: 'Library',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.play_circle),
-            label: 'Player',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.queue_music),
-            label: 'Playlist',
-          ),
-        ],
+      bottomNavigationBar: SizedBox(
+        height: 56,
+        child: NavigationBar(
+          height: 56,
+          labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
+          selectedIndex: _selectedIndex,
+          onDestinationSelected: (index) {
+            setState(() {
+              _selectedIndex = index;
+            });
+          },
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.library_music),
+              label: 'Library',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.play_circle),
+              label: 'Player',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.queue_music),
+              label: 'Playlist',
+            ),
+          ],
+        ),
       ),
     );
   }

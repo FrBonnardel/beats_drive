@@ -2,12 +2,14 @@ import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_session/audio_session.dart';
 import 'dart:io';
+import 'package:beats_drive/services/metadata_service.dart';
 
 class AudioProvider with ChangeNotifier {
   final AudioPlayer _audioPlayer = AudioPlayer();
   bool _isPlaying = false;
   String _currentSong = 'No Song Selected';
   String _currentArtist = 'No Artist';
+  String _currentAlbum = 'Unknown Album';
   Duration _duration = Duration.zero;
   Duration _position = Duration.zero;
   List<String> _playlist = [];
@@ -64,6 +66,7 @@ class AudioProvider with ChangeNotifier {
   bool get isPlaying => _isPlaying;
   String get currentSong => _currentSong;
   String get currentArtist => _currentArtist;
+  String get currentAlbum => _currentAlbum;
   Duration get duration => _duration;
   Duration get position => _position;
   List<String> get playlist => _filteredPlaylist;
@@ -138,6 +141,23 @@ class AudioProvider with ChangeNotifier {
   Future<void> play() async {
     try {
       if (_playlist.isEmpty) return;
+      
+      // Initialize audio session
+      final session = await AudioSession.instance;
+      await session.configure(const AudioSessionConfiguration(
+        avAudioSessionCategory: AVAudioSessionCategory.playback,
+        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.allowBluetooth,
+        avAudioSessionMode: AVAudioSessionMode.spokenAudio,
+        avAudioSessionRouteSharingPolicy: AVAudioSessionRouteSharingPolicy.defaultPolicy,
+        avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.none,
+        androidAudioAttributes: AndroidAudioAttributes(
+          contentType: AndroidAudioContentType.music,
+          usage: AndroidAudioUsage.media,
+        ),
+        androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
+        androidWillPauseWhenDucked: true,
+      ));
+
       final filePath = _playlist[_currentIndex];
       await _audioPlayer.setFilePath(filePath);
       await _audioPlayer.play();
@@ -186,20 +206,29 @@ class AudioProvider with ChangeNotifier {
     await play();
   }
 
-  void selectSong(int index) {
+  Future<void> selectSong(int index) async {
     if (index >= 0 && index < _playlist.length) {
       _currentIndex = index;
-      _updateCurrentSong();
-      play();
+      await _updateCurrentSong();
+      await play();
     }
   }
 
-  void _updateCurrentSong() {
+  Future<void> _updateCurrentSong() async {
     if (_playlist.isNotEmpty) {
       final filePath = _playlist[_currentIndex];
       final fileName = filePath.split('/').last;
       _currentSong = fileName;
-      _currentArtist = 'Local Music'; // This will be updated with metadata
+      
+      try {
+        final metadata = await MetadataService.getMetadata(filePath);
+        _currentArtist = metadata['artist'] as String? ?? 'Unknown Artist';
+        _currentAlbum = metadata['album'] as String? ?? 'Unknown Album';
+      } catch (e) {
+        _currentArtist = 'Unknown Artist';
+        _currentAlbum = 'Unknown Album';
+      }
+      
       notifyListeners();
     }
   }

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
-import 'package:beats_drive/screens/home_screen.dart';
+import 'package:beats_drive/screens/loading_screen.dart';
 import 'package:beats_drive/providers/audio_provider.dart';
 import 'package:beats_drive/providers/music_provider.dart';
 
@@ -31,7 +31,7 @@ class MyApp extends StatelessWidget {
             Theme.of(context).textTheme,
           ),
         ),
-        home: const HomeScreen(),
+        home: const LoadingScreen(),
       ),
     );
   }
