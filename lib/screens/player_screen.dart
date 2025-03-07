@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'dart:async';
 import '../providers/audio_provider.dart';
 import '../services/metadata_service.dart';
+import '../services/media_notification_service.dart';
 
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({Key? key}) : super(key: key);
@@ -21,6 +22,34 @@ class _PlayerScreenState extends State<PlayerScreen> {
     super.initState();
     _loadMetadata();
     _setupAudioListener();
+    _setupMediaNotificationListener();
+  }
+
+  void _setupMediaNotificationListener() {
+    MediaNotificationService.onPlay.listen((_) {
+      final audioProvider = Provider.of<AudioProvider>(context, listen: false);
+      audioProvider.play();
+    });
+
+    MediaNotificationService.onPause.listen((_) {
+      final audioProvider = Provider.of<AudioProvider>(context, listen: false);
+      audioProvider.pause();
+    });
+
+    MediaNotificationService.onStop.listen((_) {
+      final audioProvider = Provider.of<AudioProvider>(context, listen: false);
+      audioProvider.stop();
+    });
+
+    MediaNotificationService.onNext.listen((_) {
+      final audioProvider = Provider.of<AudioProvider>(context, listen: false);
+      audioProvider.selectSong(audioProvider.currentIndex + 1);
+    });
+
+    MediaNotificationService.onPrevious.listen((_) {
+      final audioProvider = Provider.of<AudioProvider>(context, listen: false);
+      audioProvider.selectSong(audioProvider.currentIndex - 1);
+    });
   }
 
   void _setupAudioListener() {
@@ -37,8 +66,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     
     final audioProvider = Provider.of<AudioProvider>(context, listen: false);
     
-    if (audioProvider.currentSong != null) {
-      final song = audioProvider.currentSong!;
+    if (audioProvider.playlist.isNotEmpty && audioProvider.currentIndex < audioProvider.playlist.length) {
+      final song = audioProvider.playlist[audioProvider.currentIndex];
       final metadata = await MetadataService.getMetadata(song);
       
       if (mounted) {
@@ -46,6 +75,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           _metadata = metadata;
           _isLoading = false;
         });
+        audioProvider.setMetadata(metadata);
       }
     }
   }
@@ -68,11 +98,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
             return const Center(child: CircularProgressIndicator());
           }
 
-          final song = audioProvider.currentSong;
-          if (song == null) {
+          if (audioProvider.playlist.isEmpty) {
             return const Center(child: Text('No song playing'));
           }
 
+          final song = audioProvider.playlist[audioProvider.currentIndex];
           return Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -97,54 +127,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         child: Image.memory(
                           _metadata!['albumArt'],
                           fit: BoxFit.cover,
+                          gaplessPlayback: true,
                           errorBuilder: (context, error, stackTrace) {
-                            return Container(
-                              width: 300,
-                              height: 300,
-                              color: Colors.grey[800],
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.music_note, 
-                                    size: 100, 
-                                    color: Colors.white.withOpacity(0.5)
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Text(
-                                    'No Album Art',
-                                    style: TextStyle(
-                                      color: Colors.white.withOpacity(0.5),
-                                      fontSize: 16,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
+                            debugPrint('Error loading album art: $error');
+                            debugPrint('Stack trace: $stackTrace');
+                            return _buildPlaceholderArtwork();
                           },
                         ),
                       )
-                    : Container(
-                        width: 300,
-                        height: 300,
-                        color: Colors.grey[800],
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.music_note, 
-                              size: 100, 
-                              color: Colors.white.withOpacity(0.5)
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              'No Album Art',
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.5),
-                                fontSize: 16,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+                    : _buildPlaceholderArtwork(),
               ),
               const SizedBox(height: 20),
               
@@ -189,7 +180,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
               
               // Progress Bar
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
+                padding: const EdgeInsets.symmetric(horizontal: 24),
                 child: Column(
                   children: [
                     Slider(
@@ -202,8 +193,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(audioProvider.position.toString().split('.').first),
-                        Text(audioProvider.duration.toString().split('.').first),
+                        Text(
+                          _formatDuration(audioProvider.position),
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.7),
+                            fontSize: 14,
+                          ),
+                        ),
+                        Text(
+                          _formatDuration(audioProvider.duration),
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.7),
+                            fontSize: 14,
+                          ),
+                        ),
                       ],
                     ),
                   ],
@@ -211,16 +214,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
               ),
               const SizedBox(height: 20),
               
-              // Controls
+              // Playback Controls
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.skip_previous),
-                    onPressed: audioProvider.previous,
+                    icon: const Icon(Icons.skip_previous, size: 40),
+                    onPressed: () {
+                      audioProvider.selectSong(audioProvider.currentIndex - 1);
+                    },
                   ),
+                  const SizedBox(width: 20),
                   IconButton(
-                    icon: Icon(audioProvider.isPlaying ? Icons.pause : Icons.play_arrow),
+                    icon: Icon(
+                      audioProvider.isPlaying ? Icons.pause : Icons.play_arrow,
+                      size: 60,
+                    ),
                     onPressed: () {
                       if (audioProvider.isPlaying) {
                         audioProvider.pause();
@@ -229,9 +238,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       }
                     },
                   ),
+                  const SizedBox(width: 20),
                   IconButton(
-                    icon: const Icon(Icons.skip_next),
-                    onPressed: audioProvider.next,
+                    icon: const Icon(Icons.skip_next, size: 40),
+                    onPressed: () {
+                      audioProvider.selectSong(audioProvider.currentIndex + 1);
+                    },
                   ),
                 ],
               ),
@@ -240,5 +252,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
         },
       ),
     );
+  }
+
+  Widget _buildPlaceholderArtwork() {
+    return Container(
+      width: 300,
+      height: 300,
+      color: Colors.grey[800],
+      child: const Icon(
+        Icons.music_note,
+        size: 100,
+        color: Colors.white54,
+      ),
+    );
+  }
+
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+    return '$minutes:$seconds';
   }
 } 

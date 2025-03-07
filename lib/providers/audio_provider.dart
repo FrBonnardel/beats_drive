@@ -3,28 +3,29 @@ import 'package:just_audio/just_audio.dart';
 import 'package:audio_session/audio_session.dart';
 import 'dart:io';
 import 'package:beats_drive/services/metadata_service.dart';
+import 'package:flutter/material.dart';
+import '../services/media_notification_service.dart';
 
 class AudioProvider with ChangeNotifier {
   final AudioPlayer _audioPlayer = AudioPlayer();
-  bool _isPlaying = false;
-  String _currentSong = 'No Song Selected';
-  String _currentArtist = 'No Artist';
-  String _currentAlbum = 'Unknown Album';
-  Duration _duration = Duration.zero;
-  Duration _position = Duration.zero;
   List<String> _playlist = [];
-  List<String> _filteredPlaylist = [];
   int _currentIndex = 0;
+  bool _isPlaying = false;
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
+  Map<String, dynamic>? _currentMetadata;
   String _searchQuery = '';
   bool _isShuffleEnabled = false;
   bool _isRepeatEnabled = false;
   List<int> _shuffleOrder = [];
+  String _currentSong = '';
+  String _currentArtist = '';
 
   AudioProvider() {
-    _initAudioPlayer();
+    _setupAudioPlayer();
   }
 
-  void _initAudioPlayer() {
+  void _setupAudioPlayer() {
     _audioPlayer.playerStateStream.listen((state) {
       _isPlaying = state.playing;
       if (state.processingState == ProcessingState.completed) {
@@ -40,48 +41,76 @@ class AudioProvider with ChangeNotifier {
 
     _audioPlayer.positionStream.listen((position) {
       _position = position;
+      _updateMediaNotification();
+      notifyListeners();
+    });
+
+    _audioPlayer.currentIndexStream.listen((index) async {
+      _currentIndex = index ?? 0;
+      if (index != null && index < _playlist.length) {
+        _currentSong = _playlist[index].split('/').last;
+        // Get metadata for the current song
+        _currentMetadata = await MetadataService.getMetadata(_playlist[index]);
+        _currentArtist = _currentMetadata?['artist'] ?? 'Unknown Artist';
+        _updateMediaNotification();
+      }
       notifyListeners();
     });
   }
 
-  void _handleSongCompletion() {
-    if (_isRepeatEnabled) {
-      _audioPlayer.seek(Duration.zero);
-      _audioPlayer.play();
-    } else {
-      next();
+  void _updateMediaNotification() {
+    if (_currentMetadata != null) {
+      MediaNotificationService.showNotification(
+        title: _currentMetadata!['title'] ?? "Unknown Title",
+        author: _currentMetadata!['artist'] ?? "Unknown Artist",
+        image: _currentMetadata!['albumArt'],
+        play: _isPlaying,
+      );
     }
   }
 
-  void updatePlaylist(List<String> musicFiles) {
-    _playlist = musicFiles;
-    _filteredPlaylist = _playlist;
-    if (_currentIndex >= _playlist.length) {
-      _currentIndex = 0;
+  Future<void> updatePlaylist(List<String> files) async {
+    _playlist = files;
+    await _audioPlayer.setAudioSource(
+      ConcatenatingAudioSource(
+        children: files.map((file) => AudioSource.file(file)).toList(),
+      ),
+    );
+    // Get metadata for the first song
+    if (files.isNotEmpty) {
+      _currentMetadata = await MetadataService.getMetadata(files[0]);
+      _currentArtist = _currentMetadata?['artist'] ?? 'Unknown Artist';
+      _currentSong = files[0].split('/').last;
     }
-    _updateCurrentSong();
     notifyListeners();
   }
 
-  bool get isPlaying => _isPlaying;
-  String get currentSong => _currentSong;
-  String get currentArtist => _currentArtist;
-  String get currentAlbum => _currentAlbum;
-  Duration get duration => _duration;
-  Duration get position => _position;
-  List<String> get playlist => _filteredPlaylist;
-  int get currentIndex => _currentIndex;
-  String get searchQuery => _searchQuery;
-  bool get isShuffleEnabled => _isShuffleEnabled;
-  bool get isRepeatEnabled => _isRepeatEnabled;
-  AudioPlayer get audioPlayer => _audioPlayer;
-
-  set currentIndex(int value) {
-    if (value >= 0 && value < _playlist.length) {
-      _currentIndex = value;
-      _updateCurrentSong();
-      notifyListeners();
+  Future<void> selectSong(int index) async {
+    if (index >= 0 && index < _playlist.length) {
+      await _audioPlayer.seek(Duration.zero, index: index);
+      await _audioPlayer.play();
     }
+  }
+
+  Future<void> play() async {
+    await _audioPlayer.play();
+  }
+
+  Future<void> pause() async {
+    await _audioPlayer.pause();
+  }
+
+  Future<void> stop() async {
+    await _audioPlayer.stop();
+    await MediaNotificationService.hideNotification();
+  }
+
+  Future<void> seek(Duration position) async {
+    await _audioPlayer.seek(position);
+  }
+
+  Future<void> setVolume(double volume) async {
+    await _audioPlayer.setVolume(volume);
   }
 
   void setSearchQuery(String query) {
@@ -92,170 +121,96 @@ class AudioProvider with ChangeNotifier {
 
   void _filterPlaylist() {
     if (_searchQuery.isEmpty) {
-      _filteredPlaylist = _playlist;
+      _playlist = _playlist;
     } else {
-      _filteredPlaylist = _playlist.where((filePath) {
-        final fileName = filePath.split('/').last.toLowerCase();
+      _playlist = _playlist.where((file) {
+        final fileName = file.toLowerCase();
         return fileName.contains(_searchQuery.toLowerCase());
       }).toList();
     }
   }
 
-  void removeFromPlaylist(int index) {
-    if (index >= 0 && index < _playlist.length) {
-      _playlist.removeAt(index);
-      if (_currentIndex == index) {
-        if (_playlist.isEmpty) {
-          _currentIndex = 0;
-          _currentSong = 'No Song Selected';
-          _currentArtist = 'No Artist';
-        } else if (_currentIndex >= _playlist.length) {
-          _currentIndex = _playlist.length - 1;
-        }
-        _updateCurrentSong();
-      } else if (_currentIndex > index) {
-        _currentIndex--;
-      }
-      _filterPlaylist();
-      notifyListeners();
-    }
-  }
-
-  void toggleShuffle() {
-    _isShuffleEnabled = !_isShuffleEnabled;
-    if (_isShuffleEnabled) {
-      _generateShuffleOrder();
-    }
-    notifyListeners();
-  }
-
-  void toggleRepeat() {
-    _isRepeatEnabled = !_isRepeatEnabled;
-    notifyListeners();
-  }
-
-  void _generateShuffleOrder() {
-    _shuffleOrder = List.generate(_playlist.length, (index) => index);
-    _shuffleOrder.shuffle();
-  }
-
-  Future<void> play() async {
-    try {
-      if (_playlist.isEmpty) return;
-      
-      // Initialize audio session
-      final session = await AudioSession.instance;
-      await session.configure(const AudioSessionConfiguration(
-        avAudioSessionCategory: AVAudioSessionCategory.playback,
-        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.allowBluetooth,
-        avAudioSessionMode: AVAudioSessionMode.spokenAudio,
-        avAudioSessionRouteSharingPolicy: AVAudioSessionRouteSharingPolicy.defaultPolicy,
-        avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.none,
-        androidAudioAttributes: AndroidAudioAttributes(
-          contentType: AndroidAudioContentType.music,
-          usage: AndroidAudioUsage.media,
-        ),
-        androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
-        androidWillPauseWhenDucked: true,
-      ));
-
-      final filePath = _playlist[_currentIndex];
-      await _audioPlayer.setFilePath(filePath);
-      await _audioPlayer.play();
-    } catch (e) {
-      debugPrint('Error playing audio: $e');
-    }
-  }
-
-  Future<void> pause() async {
-    try {
-      await _audioPlayer.pause();
-    } catch (e) {
-      debugPrint('Error pausing audio: $e');
-    }
-  }
-
-  Future<void> next() async {
-    if (_isShuffleEnabled && _shuffleOrder.isNotEmpty) {
-      final currentShuffleIndex = _shuffleOrder.indexOf(_currentIndex);
-      if (currentShuffleIndex < _shuffleOrder.length - 1) {
-        _currentIndex = _shuffleOrder[currentShuffleIndex + 1];
-      } else {
-        _generateShuffleOrder();
-        _currentIndex = _shuffleOrder[0];
-      }
+  void _handleSongCompletion() {
+    if (_isRepeatEnabled) {
+      _audioPlayer.seek(Duration.zero);
+      _audioPlayer.play();
     } else if (_currentIndex < _playlist.length - 1) {
-      _currentIndex++;
-    }
-    _updateCurrentSong();
-    await play();
-  }
-
-  Future<void> previous() async {
-    if (_isShuffleEnabled && _shuffleOrder.isNotEmpty) {
-      final currentShuffleIndex = _shuffleOrder.indexOf(_currentIndex);
-      if (currentShuffleIndex > 0) {
-        _currentIndex = _shuffleOrder[currentShuffleIndex - 1];
-      } else {
-        _generateShuffleOrder();
-        _currentIndex = _shuffleOrder.last;
-      }
-    } else if (_currentIndex > 0) {
-      _currentIndex--;
-    }
-    _updateCurrentSong();
-    await play();
-  }
-
-  Future<void> selectSong(int index) async {
-    if (index >= 0 && index < _playlist.length) {
-      _currentIndex = index;
-      await _updateCurrentSong();
-      await play();
-    }
-  }
-
-  Future<void> _updateCurrentSong() async {
-    if (_playlist.isNotEmpty) {
-      final filePath = _playlist[_currentIndex];
-      final fileName = filePath.split('/').last;
-      _currentSong = fileName;
-      
-      try {
-        final metadata = await MetadataService.getMetadata(filePath);
-        _currentArtist = metadata['artist'] as String? ?? 'Unknown Artist';
-        _currentAlbum = metadata['album'] as String? ?? 'Unknown Album';
-      } catch (e) {
-        _currentArtist = 'Unknown Artist';
-        _currentAlbum = 'Unknown Album';
-      }
-      
-      notifyListeners();
-    }
-  }
-
-  Future<void> seek(Duration position) async {
-    try {
-      await _audioPlayer.seek(position);
-    } catch (e) {
-      debugPrint('Error seeking audio: $e');
-    }
-  }
-
-  Future<void> restart() async {
-    try {
-      await _audioPlayer.seek(Duration.zero);
-      if (!_isPlaying) {
-        await _audioPlayer.play();
-      }
-    } catch (e) {
-      debugPrint('Error restarting audio: $e');
+      selectSong(_currentIndex + 1);
     }
   }
 
   @override
   void dispose() {
     _audioPlayer.dispose();
+    MediaNotificationService.hideNotification();
     super.dispose();
+  }
+
+  Future<void> next() async {
+    if (_currentIndex < _playlist.length - 1) {
+      await selectSong(_currentIndex + 1);
+    }
+  }
+
+  Future<void> previous() async {
+    if (_currentIndex > 0) {
+      await selectSong(_currentIndex - 1);
+    }
+  }
+
+  void removeFromPlaylist(int index) {
+    if (index >= 0 && index < _playlist.length) {
+      _playlist.removeAt(index);
+      if (index == _currentIndex) {
+        if (_playlist.isEmpty) {
+          stop();
+        } else {
+          selectSong(0);
+        }
+      } else if (index < _currentIndex) {
+        _currentIndex--;
+      }
+      notifyListeners();
+    }
+  }
+
+  // Getters
+  List<String> get playlist => _playlist;
+  int get currentIndex => _currentIndex;
+  bool get isPlaying => _isPlaying;
+  Duration get position => _position;
+  Duration get duration => _duration;
+  Map<String, dynamic>? get currentMetadata => _currentMetadata;
+  AudioPlayer get audioPlayer => _audioPlayer;
+  String get searchQuery => _searchQuery;
+  bool get isShuffleEnabled => _isShuffleEnabled;
+  bool get isRepeatEnabled => _isRepeatEnabled;
+  String get currentSong => _currentSong;
+  String get currentArtist => _currentArtist;
+
+  // Add setter for currentIndex
+  set currentIndex(int value) {
+    if (value >= 0 && value < _playlist.length) {
+      _currentIndex = value;
+      if (_playlist.isNotEmpty) {
+        _currentSong = _playlist[value].split('/').last;
+        // Get metadata for the current song
+        MetadataService.getMetadata(_playlist[value]).then((metadata) {
+          _currentMetadata = metadata;
+          _currentArtist = metadata['artist'] ?? 'Unknown Artist';
+          _updateMediaNotification();
+          notifyListeners();
+        });
+      }
+      notifyListeners();
+    }
+  }
+
+  // Add setMetadata method
+  void setMetadata(Map<String, dynamic> metadata) {
+    _currentMetadata = metadata;
+    _currentArtist = metadata['artist'] ?? 'Unknown Artist';
+    _updateMediaNotification();
+    notifyListeners();
   }
 } 

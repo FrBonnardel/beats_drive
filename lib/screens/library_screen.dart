@@ -188,6 +188,19 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 
+  Widget _buildPlaceholderThumbnail() {
+    return Container(
+      width: 56,
+      height: 56,
+      color: Colors.grey[800],
+      child: Icon(
+        Icons.music_note,
+        color: Colors.white.withOpacity(0.5),
+        size: 24,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -335,21 +348,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                   width: 56,
                                   height: 56,
                                   fit: BoxFit.cover,
+                                  gaplessPlayback: true,
                                   errorBuilder: (context, error, stackTrace) {
-                                    return Container(
-                                      width: 56,
-                                      height: 56,
-                                      color: Colors.grey[800],
-                                      child: Icon(Icons.music_note, color: Colors.white),
-                                    );
+                                    debugPrint('Error loading album art thumbnail: $error');
+                                    debugPrint('Stack trace: $stackTrace');
+                                    return _buildPlaceholderThumbnail();
                                   },
                                 )
-                              : Container(
-                                  width: 56,
-                                  height: 56,
-                                  color: Colors.grey[800],
-                                  child: Icon(Icons.music_note, color: Colors.white),
-                                ),
+                              : _buildPlaceholderThumbnail(),
                         ),
                         title: Text(
                           title,

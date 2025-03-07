@@ -4,8 +4,11 @@ import 'package:provider/provider.dart';
 import 'package:beats_drive/screens/loading_screen.dart';
 import 'package:beats_drive/providers/audio_provider.dart';
 import 'package:beats_drive/providers/music_provider.dart';
+import 'services/media_notification_service.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await MediaNotificationService.initialize();
   runApp(const MyApp());
 }
 

@@ -191,18 +191,58 @@ class MetadataService {
   }
 
   static Uint8List? _extractPicture(List<int> frameData) {
-    if (frameData.length < 2) return null;
-    
-    final textEncoding = frameData[0];
-    final mimeTypeLength = frameData.indexOf(0, 1);
-    if (mimeTypeLength == -1) return null;
-    
-    final pictureType = frameData[mimeTypeLength + 1];
-    final descriptionLength = frameData.indexOf(0, mimeTypeLength + 2);
-    if (descriptionLength == -1) return null;
-    
-    final pictureData = frameData.sublist(descriptionLength + 1);
-    return Uint8List.fromList(pictureData);
+    try {
+      if (frameData.length < 2) {
+        debugPrint('Picture frame data too short: ${frameData.length} bytes');
+        return null;
+      }
+      
+      final textEncoding = frameData[0];
+      final mimeTypeLength = frameData.indexOf(0, 1);
+      if (mimeTypeLength == -1) {
+        debugPrint('No null terminator found for MIME type');
+        return null;
+      }
+      
+      final mimeType = String.fromCharCodes(frameData.sublist(1, mimeTypeLength));
+      debugPrint('Found picture with MIME type: $mimeType');
+      
+      if (!mimeType.startsWith('image/')) {
+        debugPrint('Invalid MIME type for picture: $mimeType');
+        return null;
+      }
+      
+      final pictureType = frameData[mimeTypeLength + 1];
+      final descriptionLength = frameData.indexOf(0, mimeTypeLength + 2);
+      if (descriptionLength == -1) {
+        debugPrint('No null terminator found for description');
+        return null;
+      }
+      
+      final pictureData = frameData.sublist(descriptionLength + 1);
+      debugPrint('Extracted picture data: ${pictureData.length} bytes');
+      
+      // Basic validation of image data
+      if (pictureData.length < 4) {
+        debugPrint('Picture data too short: ${pictureData.length} bytes');
+        return null;
+      }
+      
+      // Check for common image format signatures
+      final isJPEG = pictureData[0] == 0xFF && pictureData[1] == 0xD8;
+      final isPNG = pictureData[0] == 0x89 && pictureData[1] == 0x50;
+      
+      if (!isJPEG && !isPNG) {
+        debugPrint('Unsupported image format in ID3v2 frame. First bytes: ${pictureData[0].toRadixString(16)}, ${pictureData[1].toRadixString(16)}');
+        return null;
+      }
+      
+      return Uint8List.fromList(pictureData);
+    } catch (e, stackTrace) {
+      debugPrint('Error extracting picture: $e');
+      debugPrint('Stack trace: $stackTrace');
+      return null;
+    }
   }
 
   static void _readM4AMetadata(List<int> headerBytes, Map<String, dynamic> result) {
@@ -380,31 +420,78 @@ class MetadataService {
   }
 
   static Uint8List? _extractFLACPicture(List<int> data) {
-    if (data.length < 32) return null;
-    
-    // Skip picture type, mime type length, mime type, description length, description
-    var offset = 4;
-    final mimeTypeLength = (data[offset] << 24) | (data[offset + 1] << 16) | 
+    try {
+      if (data.length < 32) {
+        debugPrint('FLAC picture data too short: ${data.length} bytes');
+        return null;
+      }
+      
+      // Skip picture type
+      var offset = 4;
+      
+      // Read MIME type length and MIME type
+      final mimeTypeLength = (data[offset] << 24) | (data[offset + 1] << 16) | 
+                           (data[offset + 2] << 8) | data[offset + 3];
+      offset += 4;
+      
+      if (offset + mimeTypeLength > data.length) {
+        debugPrint('Invalid MIME type length: $mimeTypeLength');
+        return null;
+      }
+      
+      final mimeType = String.fromCharCodes(data.sublist(offset, offset + mimeTypeLength));
+      debugPrint('Found FLAC picture with MIME type: $mimeType');
+      
+      if (!mimeType.startsWith('image/')) {
+        debugPrint('Invalid MIME type for FLAC picture: $mimeType');
+        return null;
+      }
+      
+      offset += mimeTypeLength;
+      
+      // Skip description length and description
+      final descriptionLength = (data[offset] << 24) | (data[offset + 1] << 16) | 
+                              (data[offset + 2] << 8) | data[offset + 3];
+      offset += 4 + descriptionLength;
+      
+      // Skip width, height, color depth, color index count
+      offset += 16;
+      
+      // Read picture data length
+      final pictureLength = (data[offset] << 24) | (data[offset + 1] << 16) | 
                           (data[offset + 2] << 8) | data[offset + 3];
-    offset += 4 + mimeTypeLength;
-    
-    final descriptionLength = (data[offset] << 24) | (data[offset + 1] << 16) | 
-                             (data[offset + 2] << 8) | data[offset + 3];
-    offset += 4 + descriptionLength;
-    
-    // Skip width, height, color depth, color index count
-    offset += 16;
-    
-    // Read picture data length
-    final pictureLength = (data[offset] << 24) | (data[offset + 1] << 16) | 
-                         (data[offset + 2] << 8) | data[offset + 3];
-    offset += 4;
-    
-    if (offset + pictureLength <= data.length) {
-      return Uint8List.fromList(data.sublist(offset, offset + pictureLength));
+      offset += 4;
+      
+      debugPrint('FLAC picture data length: $pictureLength bytes');
+      
+      if (offset + pictureLength > data.length) {
+        debugPrint('Invalid FLAC picture data length: $pictureLength');
+        return null;
+      }
+      
+      final pictureData = data.sublist(offset, offset + pictureLength);
+      
+      // Basic validation of image data
+      if (pictureData.length < 4) {
+        debugPrint('FLAC picture data too short: ${pictureData.length} bytes');
+        return null;
+      }
+      
+      // Check for common image format signatures
+      final isJPEG = pictureData[0] == 0xFF && pictureData[1] == 0xD8;
+      final isPNG = pictureData[0] == 0x89 && pictureData[1] == 0x50;
+      
+      if (!isJPEG && !isPNG) {
+        debugPrint('Unsupported image format in FLAC file. First bytes: ${pictureData[0].toRadixString(16)}, ${pictureData[1].toRadixString(16)}');
+        return null;
+      }
+      
+      return Uint8List.fromList(pictureData);
+    } catch (e, stackTrace) {
+      debugPrint('Error extracting FLAC picture: $e');
+      debugPrint('Stack trace: $stackTrace');
+      return null;
     }
-    
-    return null;
   }
 
   static void _readWAVMetadata(List<int> headerBytes, Map<String, dynamic> result) {
@@ -575,26 +662,55 @@ class MetadataService {
   }
 
   static Uint8List? _extractM4APicture(List<int> data) {
-    if (data.length < 8) return null;
-    
-    // Skip version and flags
-    var offset = 8;
-    
-    // Skip language code
-    offset += 4;
-    
-    // Read picture data length
-    final pictureLength = (data[offset] << 24) | 
-                         (data[offset + 1] << 16) | 
-                         (data[offset + 2] << 8) | 
-                         data[offset + 3];
-    offset += 4;
-    
-    if (offset + pictureLength <= data.length) {
-      return Uint8List.fromList(data.sublist(offset, offset + pictureLength));
+    try {
+      if (data.length < 8) {
+        debugPrint('M4A picture data too short: ${data.length} bytes');
+        return null;
+      }
+      
+      // Skip version and flags
+      var offset = 4;
+      
+      // Read data size
+      final dataSize = (data[offset] << 24) | 
+                      (data[offset + 1] << 16) | 
+                      (data[offset + 2] << 8) | 
+                      data[offset + 3];
+      offset += 4;
+      
+      debugPrint('M4A picture data size: $dataSize bytes');
+      
+      // Validate data size
+      if (dataSize <= 0 || dataSize > data.length - offset) {
+        debugPrint('Invalid M4A picture data size: $dataSize (total data length: ${data.length})');
+        return null;
+      }
+      
+      // Extract picture data
+      final pictureData = data.sublist(offset, offset + dataSize);
+      debugPrint('Extracted M4A picture data: ${pictureData.length} bytes');
+      
+      // Basic validation of image data
+      if (pictureData.length < 4) {
+        debugPrint('M4A picture data too short: ${pictureData.length} bytes');
+        return null;
+      }
+      
+      // Check for common image format signatures
+      final isJPEG = pictureData[0] == 0xFF && pictureData[1] == 0xD8;
+      final isPNG = pictureData[0] == 0x89 && pictureData[1] == 0x50;
+      
+      if (!isJPEG && !isPNG) {
+        debugPrint('Unsupported image format in M4A file. First bytes: ${pictureData[0].toRadixString(16)}, ${pictureData[1].toRadixString(16)}');
+        return null;
+      }
+      
+      return Uint8List.fromList(pictureData);
+    } catch (e, stackTrace) {
+      debugPrint('Error extracting M4A picture: $e');
+      debugPrint('Stack trace: $stackTrace');
+      return null;
     }
-    
-    return null;
   }
 
   static String _getGenreName(int index) {
