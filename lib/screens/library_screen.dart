@@ -3,18 +3,32 @@ import 'package:provider/provider.dart';
 import 'package:beats_drive/providers/audio_provider.dart';
 import 'package:beats_drive/providers/music_provider.dart';
 
-class LibraryScreen extends StatelessWidget {
+class LibraryScreen extends StatefulWidget {
   const LibraryScreen({super.key});
+
+  @override
+  State<LibraryScreen> createState() => _LibraryScreenState();
+}
+
+class _LibraryScreenState extends State<LibraryScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Schedule the playlist update for the next frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final musicProvider = Provider.of<MusicProvider>(context, listen: false);
+      final audioProvider = Provider.of<AudioProvider>(context, listen: false);
+      
+      if (musicProvider.musicFiles.isNotEmpty && audioProvider.playlist.isEmpty) {
+        audioProvider.updatePlaylist(musicProvider.musicFiles);
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return Consumer2<AudioProvider, MusicProvider>(
       builder: (context, audioProvider, musicProvider, child) {
-        // Update AudioProvider's playlist when music files are scanned
-        if (musicProvider.musicFiles.isNotEmpty && audioProvider.playlist.isEmpty) {
-          audioProvider.updatePlaylist(musicProvider.musicFiles);
-        }
-
         return Scaffold(
           appBar: AppBar(
             title: const Text('Music Library'),

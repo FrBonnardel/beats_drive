@@ -26,37 +26,45 @@ class MusicScannerService {
     List<String> musicFiles = [];
     
     try {
-      // Get internal storage directory
-      final internalDir = await getExternalStorageDirectory();
-      if (internalDir != null) {
-        musicFiles.addAll(await _scanDirectory(internalDir.path));
-      }
-
-      // Get external storage directory (SD card)
-      final externalDirs = await getExternalStorageDirectories();
-      if (externalDirs != null) {
-        for (var dir in externalDirs) {
-          if (dir.path != internalDir?.path) {
-            musicFiles.addAll(await _scanDirectory(dir.path));
+      if (Platform.isAndroid) {
+        // For Android 10+ we need to use specific directories
+        final musicDir = Directory('/storage/emulated/0/Music');
+        final downloadDir = Directory('/storage/emulated/0/Download');
+        
+        if (await musicDir.exists()) {
+          try {
+            musicFiles.addAll(await _scanDirectory(musicDir.path));
+          } catch (e) {
+            print('Error scanning Music directory: $e');
           }
         }
-      }
 
-      // For Android 10+ we need to use MediaStore API
-      if (Platform.isAndroid) {
-        // Scan Music directory specifically
-        final musicDir = Directory('/storage/emulated/0/Music');
-        if (await musicDir.exists()) {
-          musicFiles.addAll(await _scanDirectory(musicDir.path));
-        }
-
-        // Scan Download directory
-        final downloadDir = Directory('/storage/emulated/0/Download');
         if (await downloadDir.exists()) {
-          musicFiles.addAll(await _scanDirectory(downloadDir.path));
+          try {
+            musicFiles.addAll(await _scanDirectory(downloadDir.path));
+          } catch (e) {
+            print('Error scanning Download directory: $e');
+          }
+        }
+
+        // Try to get additional storage directories
+        final externalDirs = await getExternalStorageDirectories();
+        if (externalDirs != null) {
+          for (var dir in externalDirs) {
+            try {
+              musicFiles.addAll(await _scanDirectory(dir.path));
+            } catch (e) {
+              print('Error scanning external directory ${dir.path}: $e');
+            }
+          }
+        }
+      } else {
+        // For iOS and other platforms
+        final documentsDir = await getExternalStorageDirectory();
+        if (documentsDir != null) {
+          musicFiles.addAll(await _scanDirectory(documentsDir.path));
         }
       }
-
     } catch (e) {
       print('Error scanning music files: $e');
     }
