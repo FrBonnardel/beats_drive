@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:beats_drive/providers/audio_provider.dart';
 import 'package:beats_drive/providers/music_provider.dart';
+import 'package:beats_drive/services/music_scanner_service.dart';
+import 'package:beats_drive/services/cache_service.dart';
 
 class LibraryScreen extends StatefulWidget {
   const LibraryScreen({super.key});
@@ -14,13 +16,21 @@ class _LibraryScreenState extends State<LibraryScreen> {
   @override
   void initState() {
     super.initState();
-    // Schedule the playlist update for the next frame
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    // Request permissions, clear cache, and scan music on launch
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       final musicProvider = Provider.of<MusicProvider>(context, listen: false);
       final audioProvider = Provider.of<AudioProvider>(context, listen: false);
       
-      if (musicProvider.musicFiles.isNotEmpty && audioProvider.playlist.isEmpty) {
-        audioProvider.updatePlaylist(musicProvider.musicFiles);
+      // Request storage permission
+      final hasPermission = await MusicScannerService.requestStoragePermission();
+      if (hasPermission) {
+        // Clear cache on first launch
+        await CacheService.clearCache();
+        // Scan for music files
+        await musicProvider.scanMusicFiles();
+        if (musicProvider.musicFiles.isNotEmpty) {
+          audioProvider.updatePlaylist(musicProvider.musicFiles);
+        }
       }
     });
   }
@@ -34,10 +44,25 @@ class _LibraryScreenState extends State<LibraryScreen> {
             title: const Text('Music Library'),
             actions: [
               IconButton(
+                key: const ValueKey('shuffle_play_button'),
+                icon: const Icon(Icons.shuffle),
+                tooltip: 'Play all randomly',
+                onPressed: () {
+                  if (audioProvider.playlist.isNotEmpty) {
+                    audioProvider.toggleShuffle();
+                    audioProvider.selectSong(0);
+                    audioProvider.play();
+                  }
+                },
+              ),
+              IconButton(
                 key: const ValueKey('refresh_button'),
                 icon: const Icon(Icons.refresh),
-                onPressed: () {
-                  musicProvider.scanMusicFiles();
+                onPressed: () async {
+                  await musicProvider.scanMusicFiles();
+                  if (musicProvider.musicFiles.isNotEmpty) {
+                    audioProvider.updatePlaylist(musicProvider.musicFiles);
+                  }
                 },
               ),
               IconButton(
@@ -53,8 +78,23 @@ class _LibraryScreenState extends State<LibraryScreen> {
             ],
           ),
           body: musicProvider.isScanning
-              ? const Center(
-                  child: CircularProgressIndicator(),
+              ? Stack(
+                  children: [
+                    const Center(
+                      child: CircularProgressIndicator(),
+                    ),
+                    Positioned(
+                      top: MediaQuery.of(context).size.height * 0.6,
+                      left: 0,
+                      right: 0,
+                      child: Center(
+                        child: Text(
+                          'Found ${musicProvider.musicFiles.length} music files',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ),
+                    ),
+                  ],
                 )
               : musicProvider.error.isNotEmpty
                   ? Center(

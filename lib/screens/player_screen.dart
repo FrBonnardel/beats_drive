@@ -1,9 +1,38 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:beats_drive/providers/audio_provider.dart';
+import 'package:beats_drive/services/metadata_service.dart';
+import 'dart:typed_data';
 
-class PlayerScreen extends StatelessWidget {
+class PlayerScreen extends StatefulWidget {
   const PlayerScreen({super.key});
+
+  @override
+  State<PlayerScreen> createState() => _PlayerScreenState();
+}
+
+class _PlayerScreenState extends State<PlayerScreen> {
+  Uint8List? _albumArt;
+  String _albumTitle = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMetadata();
+  }
+
+  Future<void> _loadMetadata() async {
+    final audioProvider = Provider.of<AudioProvider>(context, listen: false);
+    if (audioProvider.currentSong.isNotEmpty) {
+      final metadata = await MetadataService.getMetadata(audioProvider.playlist[audioProvider.currentIndex]);
+      if (mounted) {
+        setState(() {
+          _albumArt = metadata['albumArt'] as Uint8List?;
+          _albumTitle = metadata['album'] as String? ?? '';
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -27,25 +56,35 @@ class PlayerScreen extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: Theme.of(context).colorScheme.primary,
                       borderRadius: BorderRadius.circular(16),
+                      image: _albumArt != null
+                          ? DecorationImage(
+                              image: MemoryImage(_albumArt!),
+                              fit: BoxFit.cover,
+                            )
+                          : null,
                     ),
-                    child: Center(
-                      child: Text(
-                        audioProvider.currentSong.isNotEmpty
-                            ? audioProvider.currentSong[0]
-                            : '?',
-                        style: const TextStyle(
-                          fontSize: 48,
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
+                    child: _albumArt == null
+                        ? Center(
+                            child: Text(
+                              audioProvider.currentSong.isNotEmpty
+                                  ? audioProvider.currentSong[0]
+                                  : '?',
+                              style: const TextStyle(
+                                fontSize: 48,
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          )
+                        : null,
                   ),
                   const SizedBox(height: 32),
                   // Song Info
                   Text(
                     audioProvider.currentSong,
-                    style: Theme.of(context).textTheme.headlineSmall,
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 8),
@@ -56,6 +95,16 @@ class PlayerScreen extends StatelessWidget {
                         ),
                     textAlign: TextAlign.center,
                   ),
+                  if (_albumTitle.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      _albumTitle,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
                   const SizedBox(height: 32),
                   // Progress Bar
                   Slider(
@@ -72,11 +121,15 @@ class PlayerScreen extends StatelessWidget {
                       children: [
                         Text(
                           _formatDuration(audioProvider.position),
-                          style: Theme.of(context).textTheme.bodySmall,
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              ),
                         ),
                         Text(
                           _formatDuration(audioProvider.duration),
-                          style: Theme.of(context).textTheme.bodySmall,
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              ),
                         ),
                       ],
                     ),
@@ -93,7 +146,27 @@ class PlayerScreen extends StatelessWidget {
                               ? Theme.of(context).colorScheme.primary
                               : null,
                         ),
-                        onPressed: audioProvider.toggleShuffle,
+                        tooltip: audioProvider.isShuffleEnabled 
+                            ? 'Disable random playback' 
+                            : 'Enable random playback',
+                        onPressed: () {
+                          audioProvider.toggleShuffle();
+                          if (audioProvider.isShuffleEnabled) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Random playback enabled'),
+                                duration: Duration(seconds: 2),
+                              ),
+                            );
+                          } else {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Random playback disabled'),
+                                duration: Duration(seconds: 2),
+                              ),
+                            );
+                          }
+                        },
                       ),
                       IconButton(
                         icon: const Icon(Icons.skip_previous),

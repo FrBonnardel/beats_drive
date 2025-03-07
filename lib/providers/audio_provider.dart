@@ -199,7 +199,7 @@ class AudioProvider with ChangeNotifier {
       final filePath = _playlist[_currentIndex];
       final fileName = filePath.split('/').last;
       _currentSong = fileName;
-      _currentArtist = 'Local Music'; // You could extract artist info from metadata if needed
+      _currentArtist = 'Local Music'; // This will be updated with metadata
       notifyListeners();
     }
   }
@@ -209,6 +209,17 @@ class AudioProvider with ChangeNotifier {
       await _audioPlayer.seek(position);
     } catch (e) {
       debugPrint('Error seeking audio: $e');
+    }
+  }
+
+  Future<void> restart() async {
+    try {
+      await _audioPlayer.seek(Duration.zero);
+      if (!_isPlaying) {
+        await _audioPlayer.play();
+      }
+    } catch (e) {
+      debugPrint('Error restarting audio: $e');
     }
   }
 
