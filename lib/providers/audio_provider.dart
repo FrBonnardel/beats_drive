@@ -70,19 +70,26 @@ class AudioProvider with ChangeNotifier {
   }
 
   Future<void> updatePlaylist(List<String> files) async {
-    _playlist = files;
-    await _audioPlayer.setAudioSource(
-      ConcatenatingAudioSource(
-        children: files.map((file) => AudioSource.file(file)).toList(),
-      ),
-    );
-    // Get metadata for the first song
-    if (files.isNotEmpty) {
-      _currentMetadata = await MetadataService.getMetadata(files[0]);
-      _currentArtist = _currentMetadata?['artist'] ?? 'Unknown Artist';
-      _currentSong = files[0].split('/').last;
+    // Only update if the playlist is different
+    if (_playlist != files) {
+      _playlist = files;
+      await _audioPlayer.setAudioSource(
+        ConcatenatingAudioSource(
+          children: files.map((file) => AudioSource.file(file)).toList(),
+        ),
+      );
+      // Get metadata for the current song if we have one
+      if (_currentIndex >= 0 && _currentIndex < files.length) {
+        _currentMetadata = await MetadataService.getMetadata(files[_currentIndex]);
+        _currentArtist = _currentMetadata?['artist'] ?? 'Unknown Artist';
+        _currentSong = files[_currentIndex].split('/').last;
+      } else if (files.isNotEmpty) {
+        _currentMetadata = await MetadataService.getMetadata(files[0]);
+        _currentArtist = _currentMetadata?['artist'] ?? 'Unknown Artist';
+        _currentSong = files[0].split('/').last;
+      }
+      notifyListeners();
     }
-    notifyListeners();
   }
 
   Future<void> selectSong(int index) async {
@@ -135,7 +142,7 @@ class AudioProvider with ChangeNotifier {
       _audioPlayer.seek(Duration.zero);
       _audioPlayer.play();
     } else if (_currentIndex < _playlist.length - 1) {
-      selectSong(_currentIndex + 1);
+      selectSong(_getNextIndex());
     }
   }
 
@@ -212,5 +219,35 @@ class AudioProvider with ChangeNotifier {
     _currentArtist = metadata['artist'] ?? 'Unknown Artist';
     _updateMediaNotification();
     notifyListeners();
+  }
+
+  void toggleShuffle() {
+    _isShuffleEnabled = !_isShuffleEnabled;
+    if (_isShuffleEnabled) {
+      _generateShuffleOrder();
+    }
+    notifyListeners();
+  }
+
+  void toggleRepeat() {
+    _isRepeatEnabled = !_isRepeatEnabled;
+    notifyListeners();
+  }
+
+  void _generateShuffleOrder() {
+    _shuffleOrder = List.generate(_playlist.length, (index) => index);
+    _shuffleOrder.shuffle();
+  }
+
+  int _getNextIndex() {
+    if (_isShuffleEnabled) {
+      final currentShuffleIndex = _shuffleOrder.indexOf(_currentIndex);
+      if (currentShuffleIndex < _shuffleOrder.length - 1) {
+        return _shuffleOrder[currentShuffleIndex + 1];
+      }
+      _generateShuffleOrder();
+      return _shuffleOrder[0];
+    }
+    return _currentIndex + 1;
   }
 } 

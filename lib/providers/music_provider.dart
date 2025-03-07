@@ -36,18 +36,13 @@ class MusicProvider with ChangeNotifier {
     try {
       // Check if we have valid cached files
       final cachedFiles = await CacheService.loadMusicFiles();
-      final lastScanTime = await CacheService.getLastScanTime();
-      final now = DateTime.now();
       
       // Only rescan if:
       // 1. Force rescan is requested
       // 2. No cached files exist
-      // 3. Last scan was more than 24 hours ago
-      if (!forceRescan && 
-          cachedFiles.isNotEmpty && 
-          lastScanTime != null && 
-          now.difference(lastScanTime).inHours < 24) {
-        debugPrint('Using cached files from ${lastScanTime.toString()}');
+      // 3. Cache version mismatch
+      if (!forceRescan && cachedFiles.isNotEmpty) {
+        debugPrint('Using cached files');
         _musicFiles.addAll(cachedFiles);
         _totalFiles = cachedFiles.length;
         _processedFiles = cachedFiles.length;
@@ -226,14 +221,18 @@ class MusicProvider with ChangeNotifier {
         return false;
       }
 
-      final isFirstLaunch = await CacheService.isFirstLaunch();
-      if (isFirstLaunch) {
-        _currentStatus = 'First launch, clearing cache...';
+      final hasScanData = await CacheService.hasScanData();
+      if (!hasScanData) {
+        _currentStatus = 'No scan data found, performing initial scan...';
         notifyListeners();
         await CacheService.clearCache();
+        await scanMusicFiles(forceRescan: true);
+      } else {
+        // We have scan data, try to use cached data
+        _currentStatus = 'Loading cached music files...';
+        notifyListeners();
+        await scanMusicFiles(forceRescan: forceRescan);
       }
-
-      await scanMusicFiles(forceRescan: forceRescan);
       return true;
     } catch (e) {
       _handleError(e);

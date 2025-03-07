@@ -373,7 +373,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         ),
                         onTap: () {
                           final audioProvider = Provider.of<AudioProvider>(context, listen: false);
-                          audioProvider.updatePlaylist(_filteredFiles);
+                          if (audioProvider.playlist != _filteredFiles) {
+                            audioProvider.updatePlaylist(_filteredFiles);
+                          }
                           audioProvider.selectSong(index);
                         },
                       ),

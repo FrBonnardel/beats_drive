@@ -219,6 +219,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   IconButton(
+                    icon: Icon(
+                      audioProvider.isShuffleEnabled ? Icons.shuffle : Icons.shuffle_outlined,
+                      size: 30,
+                    ),
+                    onPressed: () {
+                      audioProvider.toggleShuffle();
+                    },
+                  ),
+                  const SizedBox(width: 20),
+                  IconButton(
                     icon: const Icon(Icons.skip_previous, size: 40),
                     onPressed: () {
                       audioProvider.selectSong(audioProvider.currentIndex - 1);
@@ -243,6 +253,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     icon: const Icon(Icons.skip_next, size: 40),
                     onPressed: () {
                       audioProvider.selectSong(audioProvider.currentIndex + 1);
+                    },
+                  ),
+                  const SizedBox(width: 20),
+                  IconButton(
+                    icon: Icon(
+                      audioProvider.isRepeatEnabled ? Icons.repeat_one : Icons.repeat,
+                      size: 30,
+                    ),
+                    onPressed: () {
+                      audioProvider.toggleRepeat();
                     },
                   ),
                 ],

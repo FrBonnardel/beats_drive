@@ -23,13 +23,17 @@ class CacheService {
     }
   }
 
-  static Future<bool> isFirstLaunch() async {
-    final prefs = await SharedPreferences.getInstance();
-    final isFirstLaunch = prefs.getBool('is_first_launch') ?? true;
-    if (isFirstLaunch) {
-      await prefs.setBool('is_first_launch', false);
+  static Future<bool> hasScanData() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final hasFiles = prefs.containsKey('${_musicFilesKey}_0');
+      final hasVersion = prefs.containsKey(_cacheVersionKey);
+      final version = prefs.getInt(_cacheVersionKey) ?? 0;
+      return hasFiles && hasVersion && version == _currentCacheVersion;
+    } catch (e) {
+      debugPrint('Error checking scan data: $e');
+      return false;
     }
-    return isFirstLaunch;
   }
 
   static Future<void> saveMusicFiles(List<String> files) async {
@@ -62,7 +66,15 @@ class CacheService {
       // Check cache version
       final version = prefs.getInt(_cacheVersionKey) ?? 0;
       if (version != _currentCacheVersion) {
-        debugPrint('Cache version mismatch: $version != $_currentCacheVersion');
+        debugPrint('Cache version mismatch: $version != $_currentCacheVersion, clearing cache');
+        await clearCache();
+        return [];
+      }
+
+      // Check if we have any cached files
+      final hasFiles = prefs.containsKey('${_musicFilesKey}_0');
+      if (!hasFiles) {
+        debugPrint('No cached files found');
         return [];
       }
 
@@ -83,8 +95,8 @@ class CacheService {
       return allFiles;
     } catch (e) {
       debugPrint('Error loading music files: $e');
+      return [];
     }
-    return [];
   }
 
   static Future<bool> needsRescan() async {

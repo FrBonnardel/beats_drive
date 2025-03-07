@@ -46,8 +46,11 @@ class _LoadingScreenState extends State<LoadingScreen> {
       backgroundColor: isDark ? Colors.grey[900] : Colors.white,
       body: Consumer<MusicProvider>(
         builder: (context, musicProvider, child) {
-          // Only navigate when we receive the complete scan message
-          if (musicProvider.isComplete && !musicProvider.isScanning && musicProvider.currentStatus == 'All files processed successfully') {
+          // Navigate when either:
+          // 1. Scan is complete and successful
+          // 2. Using cached files (loaded from cache)
+          if ((musicProvider.isComplete && !musicProvider.isScanning && musicProvider.currentStatus == 'All files processed successfully') ||
+              (musicProvider.isComplete && !musicProvider.isScanning && musicProvider.currentStatus.startsWith('Loaded'))) {
             _navigateToHome();
           }
 
