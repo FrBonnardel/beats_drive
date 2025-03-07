@@ -74,6 +74,7 @@ class AudioProvider with ChangeNotifier {
   String get searchQuery => _searchQuery;
   bool get isShuffleEnabled => _isShuffleEnabled;
   bool get isRepeatEnabled => _isRepeatEnabled;
+  AudioPlayer get audioPlayer => _audioPlayer;
 
   set currentIndex(int value) {
     if (value >= 0 && value < _playlist.length) {

@@ -42,14 +42,13 @@ class MetadataService {
         'lastModified': fileStats.modified.millisecondsSinceEpoch,
       };
 
-      // Read only the first 64KB for metadata
-      final headerBytes = await file.openRead(0, _headerSize).toList();
-      final bytes = headerBytes.expand((x) => x).toList();
-
+      // Read the entire file for metadata
+      final bytes = await file.readAsBytes();
+      
       // Detect file format and read metadata
       switch (extension) {
         case 'mp3':
-          _readMP3Metadata(bytes, [], result, nameWithoutExt);
+          _readMP3Metadata(bytes, result, nameWithoutExt);
           break;
         case 'm4a':
         case 'aac':
@@ -94,32 +93,32 @@ class MetadataService {
     return Future.wait(futures);
   }
 
-  static void _readMP3Metadata(List<int> headerBytes, List<int> footerBytes, Map<String, dynamic> result, String nameWithoutExt) {
-    // Look for ID3v2 header in first chunk
-    if (headerBytes.length >= 10 && 
-        headerBytes[0] == 0x49 && // 'I'
-        headerBytes[1] == 0x44 && // 'D'
-        headerBytes[2] == 0x33) { // '3'
+  static void _readMP3Metadata(List<int> bytes, Map<String, dynamic> result, String nameWithoutExt) {
+    // Look for ID3v2 header
+    if (bytes.length >= 10 && 
+        bytes[0] == 0x49 && // 'I'
+        bytes[1] == 0x44 && // 'D'
+        bytes[2] == 0x33) { // '3'
       
       // ID3v2 header found
-      final version = headerBytes[3];
-      final flags = headerBytes[4];
-      final size = (headerBytes[5] << 21) | (headerBytes[6] << 14) | (headerBytes[7] << 7) | headerBytes[8];
+      final version = bytes[3];
+      final flags = bytes[4];
+      final size = (bytes[5] << 21) | (bytes[6] << 14) | (bytes[7] << 7) | bytes[8];
       
       debugPrint('Found ID3v2.$version tag, size: $size bytes');
       
-      // Read ID3v2 frames from header
+      // Read ID3v2 frames
       var offset = 10;
-      while (offset < size + 10 && offset < headerBytes.length - 10) {
-        final frameId = String.fromCharCodes(headerBytes.sublist(offset, offset + 4));
-        final frameSize = (headerBytes[offset + 4] << 24) | 
-                        (headerBytes[offset + 5] << 16) | 
-                        (headerBytes[offset + 6] << 8) | 
-                        headerBytes[offset + 7];
-        final frameFlags = (headerBytes[offset + 8] << 8) | headerBytes[offset + 9];
+      while (offset < size + 10 && offset < bytes.length - 10) {
+        final frameId = String.fromCharCodes(bytes.sublist(offset, offset + 4));
+        final frameSize = (bytes[offset + 4] << 24) | 
+                        (bytes[offset + 5] << 16) | 
+                        (bytes[offset + 6] << 8) | 
+                        bytes[offset + 7];
+        final frameFlags = (bytes[offset + 8] << 8) | bytes[offset + 9];
         
-        if (frameSize > 0 && frameSize < headerBytes.length - offset) {
-          final frameData = headerBytes.sublist(offset + 10, offset + 10 + frameSize);
+        if (frameSize > 0 && frameSize < bytes.length - offset) {
+          final frameData = bytes.sublist(offset + 10, offset + 10 + frameSize);
           _processID3v2Frame(frameId, frameData, result);
         }
         
@@ -127,22 +126,22 @@ class MetadataService {
       }
     }
 
-    // Look for ID3v1 tag in last chunk
-    if (footerBytes.length >= 128) {
-      final id3v1Offset = footerBytes.length - 128;
-      if (footerBytes[id3v1Offset] == 0x54 && // 'T'
-          footerBytes[id3v1Offset + 1] == 0x41 && // 'A'
-          footerBytes[id3v1Offset + 2] == 0x47) { // 'G'
+    // Look for ID3v1 tag at the end
+    if (bytes.length >= 128) {
+      final id3v1Offset = bytes.length - 128;
+      if (bytes[id3v1Offset] == 0x54 && // 'T'
+          bytes[id3v1Offset + 1] == 0x41 && // 'A'
+          bytes[id3v1Offset + 2] == 0x47) { // 'G'
         
         // Only use ID3v1 if we haven't found better metadata
         if (result['title'] == nameWithoutExt) {
-          result['title'] = String.fromCharCodes(footerBytes.sublist(id3v1Offset + 3, id3v1Offset + 33)).trim();
-          result['artist'] = String.fromCharCodes(footerBytes.sublist(id3v1Offset + 33, id3v1Offset + 63)).trim();
-          result['album'] = String.fromCharCodes(footerBytes.sublist(id3v1Offset + 63, id3v1Offset + 93)).trim();
-          result['year'] = String.fromCharCodes(footerBytes.sublist(id3v1Offset + 93, id3v1Offset + 97)).trim();
-          result['comment'] = String.fromCharCodes(footerBytes.sublist(id3v1Offset + 97, id3v1Offset + 126)).trim();
-          result['track'] = footerBytes[id3v1Offset + 126];
-          result['genre'] = _getGenreName(footerBytes[id3v1Offset + 127]);
+          result['title'] = String.fromCharCodes(bytes.sublist(id3v1Offset + 3, id3v1Offset + 33)).trim();
+          result['artist'] = String.fromCharCodes(bytes.sublist(id3v1Offset + 33, id3v1Offset + 63)).trim();
+          result['album'] = String.fromCharCodes(bytes.sublist(id3v1Offset + 63, id3v1Offset + 93)).trim();
+          result['year'] = String.fromCharCodes(bytes.sublist(id3v1Offset + 93, id3v1Offset + 97)).trim();
+          result['comment'] = String.fromCharCodes(bytes.sublist(id3v1Offset + 97, id3v1Offset + 126)).trim();
+          result['track'] = bytes[id3v1Offset + 126];
+          result['genre'] = _getGenreName(bytes[id3v1Offset + 127]);
         }
       }
     }
@@ -172,9 +171,38 @@ class MetadataService {
         result['track'] = int.tryParse(_decodeText(frameData)) ?? 0;
         break;
       case 'APIC': // Picture
-        result['albumArt'] = _extractPicture(frameData);
+        final picture = _extractPicture(frameData);
+        if (picture != null) {
+          result['albumArt'] = picture;
+          result['mimeType'] = _getMimeType(frameData);
+        }
         break;
     }
+  }
+
+  static String? _getMimeType(List<int> frameData) {
+    if (frameData.length < 2) return null;
+    
+    final textEncoding = frameData[0];
+    final mimeTypeLength = frameData.indexOf(0, 1);
+    if (mimeTypeLength == -1) return null;
+    
+    return String.fromCharCodes(frameData.sublist(1, mimeTypeLength));
+  }
+
+  static Uint8List? _extractPicture(List<int> frameData) {
+    if (frameData.length < 2) return null;
+    
+    final textEncoding = frameData[0];
+    final mimeTypeLength = frameData.indexOf(0, 1);
+    if (mimeTypeLength == -1) return null;
+    
+    final pictureType = frameData[mimeTypeLength + 1];
+    final descriptionLength = frameData.indexOf(0, mimeTypeLength + 2);
+    if (descriptionLength == -1) return null;
+    
+    final pictureData = frameData.sublist(descriptionLength + 1);
+    return Uint8List.fromList(pictureData);
   }
 
   static void _readM4AMetadata(List<int> headerBytes, Map<String, dynamic> result) {
@@ -544,22 +572,6 @@ class MetadataService {
     }
     
     return '';
-  }
-
-  static Uint8List? _extractPicture(List<int> data) {
-    if (data.length < 2) return null;
-    
-    // Skip text encoding and mime type
-    var offset = 1;
-    while (offset < data.length && data[offset] != 0) offset++;
-    offset++; // Skip null terminator
-    
-    // Skip description
-    while (offset < data.length && data[offset] != 0) offset++;
-    offset++; // Skip null terminator
-    
-    // Return the remaining data as the picture
-    return Uint8List.fromList(data.sublist(offset));
   }
 
   static Uint8List? _extractM4APicture(List<int> data) {

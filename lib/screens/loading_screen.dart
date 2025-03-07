@@ -23,11 +23,18 @@ class _LoadingScreenState extends State<LoadingScreen> {
   }
 
   void _navigateToHome() {
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(
-        builder: (context) => const HomeScreen(),
-      ),
-    );
+    if (!mounted) return;
+    
+    // Use post-frame callback to ensure we're not in the middle of a build
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (context) => const HomeScreen(),
+        ),
+      );
+    });
   }
 
   @override

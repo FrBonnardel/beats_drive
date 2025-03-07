@@ -16,22 +16,45 @@ class _LibraryScreenState extends State<LibraryScreen> {
   final TextEditingController _searchController = TextEditingController();
   List<String> _filteredFiles = [];
   Map<String, Map<String, dynamic>> _metadataCache = {};
+  static const int _pageSize = 20;
+  int _currentPage = 0;
+  bool _isLoadingMore = false;
+  final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
-    _loadMetadataForLibrary();
+    _scrollController.addListener(_onScroll);
+    _initializeFilteredFiles();
   }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadMetadataForLibrary() async {
+  void _initializeFilteredFiles() {
     final musicProvider = Provider.of<MusicProvider>(context, listen: false);
-    for (final filePath in musicProvider.musicFiles) {
+    setState(() {
+      _filteredFiles = musicProvider.musicFiles;
+      _currentPage = 0;
+    });
+  }
+
+  Future<void> _loadMetadataForPage() async {
+    if (_isLoadingMore) return;
+    
+    setState(() {
+      _isLoadingMore = true;
+    });
+
+    final startIndex = _currentPage * _pageSize;
+    final endIndex = min(startIndex + _pageSize, _filteredFiles.length);
+    
+    for (var i = startIndex; i < endIndex; i++) {
+      final filePath = _filteredFiles[i];
       if (!_metadataCache.containsKey(filePath)) {
         final metadata = await MetadataService.getMetadata(filePath);
         if (mounted) {
@@ -41,6 +64,19 @@ class _LibraryScreenState extends State<LibraryScreen> {
         }
       }
     }
+
+    if (mounted) {
+      setState(() {
+        _currentPage++;
+        _isLoadingMore = false;
+      });
+    }
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent * 0.8) {
+      _loadMetadataForPage();
+    }
   }
 
   void _filterFiles(String query) {
@@ -48,7 +84,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (query.isEmpty) {
       setState(() {
         _filteredFiles = musicProvider.musicFiles;
+        _currentPage = 0;
+        _metadataCache.clear();
       });
+      _loadMetadataForPage();
     } else {
       setState(() {
         _filteredFiles = musicProvider.musicFiles.where((filePath) {
@@ -61,7 +100,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
                  artist.toLowerCase().contains(query.toLowerCase()) ||
                  album.toLowerCase().contains(query.toLowerCase());
         }).toList();
+        _currentPage = 0;
+        _metadataCache.clear();
       });
+      _loadMetadataForPage();
     }
   }
 
@@ -98,6 +140,52 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final audioProvider = Provider.of<AudioProvider>(context, listen: false);
     audioProvider.updatePlaylist(musicProvider.musicFiles);
     audioProvider.selectSong(randomIndex);
+  }
+
+  Widget _buildMusicItem(Map<String, dynamic> metadata) {
+    return ListTile(
+      leading: ClipRRect(
+        borderRadius: BorderRadius.circular(4),
+        child: metadata['albumArt'] != null
+            ? Image.memory(
+                metadata['albumArt'],
+                width: 56,
+                height: 56,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) {
+                  return Container(
+                    width: 56,
+                    height: 56,
+                    color: Colors.grey[800],
+                    child: Icon(Icons.music_note, color: Colors.white),
+                  );
+                },
+              )
+            : Container(
+                width: 56,
+                height: 56,
+                color: Colors.grey[800],
+                child: Icon(Icons.music_note, color: Colors.white),
+              ),
+      ),
+      title: Text(
+        metadata['title'] ?? 'Unknown Title',
+        style: TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      subtitle: Text(
+        metadata['artist'] ?? 'Unknown Artist',
+        style: TextStyle(
+          color: Colors.grey[400],
+          fontSize: 14,
+        ),
+      ),
+      onTap: () {
+        // Handle music item tap
+      },
+    );
   }
 
   @override
@@ -186,11 +274,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
             );
           }
 
-          // Initialize filtered files if empty
-          if (_filteredFiles.isEmpty) {
-            _filteredFiles = musicProvider.musicFiles;
-          }
-
           return Column(
             children: [
               Padding(
@@ -221,8 +304,19 @@ class _LibraryScreenState extends State<LibraryScreen> {
               ),
               Expanded(
                 child: ListView.builder(
-                  itemCount: _filteredFiles.length,
+                  controller: _scrollController,
+                  itemCount: _filteredFiles.length + (_isLoadingMore ? 1 : 0),
+                  cacheExtent: 1000,
                   itemBuilder: (context, index) {
+                    if (index == _filteredFiles.length) {
+                      return const Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(16.0),
+                          child: CircularProgressIndicator(),
+                        ),
+                      );
+                    }
+
                     final filePath = _filteredFiles[index];
                     final metadata = _metadataCache[filePath] ?? {};
                     final title = metadata['title'] as String? ?? filePath.split('/').last;
@@ -233,49 +327,49 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     return Card(
                       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                       child: ListTile(
-                        leading: albumArt != null
-                            ? ClipRRect(
-                                borderRadius: BorderRadius.circular(4),
-                                child: Image.memory(
+                        leading: ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: albumArt != null
+                              ? Image.memory(
                                   albumArt,
                                   width: 56,
                                   height: 56,
                                   fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    return Container(
+                                      width: 56,
+                                      height: 56,
+                                      color: Colors.grey[800],
+                                      child: Icon(Icons.music_note, color: Colors.white),
+                                    );
+                                  },
+                                )
+                              : Container(
+                                  width: 56,
+                                  height: 56,
+                                  color: Colors.grey[800],
+                                  child: Icon(Icons.music_note, color: Colors.white),
                                 ),
-                              )
-                            : const CircleAvatar(
-                                child: Icon(Icons.music_note),
-                              ),
+                        ),
                         title: Text(
                           title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              artist,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            if (album.isNotEmpty)
-                              Text(
-                                album,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                          ],
+                        subtitle: Text(
+                          artist,
+                          style: TextStyle(
+                            color: Colors.grey[400],
+                            fontSize: 14,
+                          ),
                         ),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.play_circle_outline),
-                          onPressed: () {
-                            final audioProvider = Provider.of<AudioProvider>(context, listen: false);
-                            audioProvider.updatePlaylist(musicProvider.musicFiles);
-                            audioProvider.selectSong(musicProvider.musicFiles.indexOf(filePath));
-                          },
-                        ),
+                        onTap: () {
+                          final audioProvider = Provider.of<AudioProvider>(context, listen: false);
+                          audioProvider.updatePlaylist(_filteredFiles);
+                          audioProvider.selectSong(index);
+                        },
                       ),
                     );
                   },

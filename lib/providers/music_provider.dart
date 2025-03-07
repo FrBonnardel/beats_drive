@@ -327,6 +327,7 @@ class MusicProvider with ChangeNotifier {
   static Future<List<String>> _scanDirectories(int batchSize) async {
     final List<String> musicFiles = [];
     final List<String> directories = ['/storage/emulated/0/Music'];
+    final Set<String> processedDirs = {};
     debugPrint('Starting directory scan from ${directories.first}');
     
     while (directories.isNotEmpty) {
@@ -335,10 +336,13 @@ class MusicProvider with ChangeNotifier {
       debugPrint('Scanning ${currentDirs.length} directories (${directories.length} remaining)');
       
       final futures = currentDirs.map((dir) async {
+        if (processedDirs.contains(dir)) return;
+        processedDirs.add(dir);
+        
         try {
           final dirList = await Directory(dir).list().toList();
           for (var entity in dirList) {
-            if (entity is Directory) {
+            if (entity is Directory && !processedDirs.contains(entity.path)) {
               directories.add(entity.path);
             } else if (entity is File && _isMusicFile(entity.path)) {
               musicFiles.add(entity.path);
