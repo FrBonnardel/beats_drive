@@ -25,7 +25,20 @@ class PlaylistScreen extends StatelessWidget {
             padding: const EdgeInsets.all(16),
             itemCount: audioProvider.playlist.length,
             onReorder: (oldIndex, newIndex) {
-              // TODO: Implement playlist reordering
+              if (oldIndex < newIndex) {
+                newIndex -= 1;
+              }
+              final item = audioProvider.playlist.removeAt(oldIndex);
+              audioProvider.playlist.insert(newIndex, item);
+              if (audioProvider.currentIndex == oldIndex) {
+                audioProvider.currentIndex = newIndex;
+              } else if (audioProvider.currentIndex > oldIndex &&
+                  audioProvider.currentIndex <= newIndex) {
+                audioProvider.currentIndex--;
+              } else if (audioProvider.currentIndex < oldIndex &&
+                  audioProvider.currentIndex >= newIndex) {
+                audioProvider.currentIndex++;
+              }
             },
             itemBuilder: (context, index) {
               final songInfo = audioProvider.playlist[index].split(' - ');
@@ -68,19 +81,44 @@ class PlaylistScreen extends StatelessWidget {
                       IconButton(
                         icon: const Icon(Icons.remove_circle_outline),
                         onPressed: () {
-                          // TODO: Implement remove from playlist
+                          _showRemoveConfirmation(context, audioProvider, index);
                         },
                       ),
                       const Icon(Icons.drag_handle),
                     ],
                   ),
                   onTap: () {
-                    // TODO: Implement song selection
+                    audioProvider.selectSong(index);
                   },
                 ),
               );
             },
           ),
+        );
+      },
+    );
+  }
+
+  void _showRemoveConfirmation(BuildContext context, AudioProvider audioProvider, int index) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Remove Song'),
+          content: const Text('Are you sure you want to remove this song from the playlist?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                audioProvider.removeFromPlaylist(index);
+              },
+              child: const Text('Remove'),
+            ),
+          ],
         );
       },
     );

@@ -10,7 +10,12 @@ class AudioProvider with ChangeNotifier {
   Duration _duration = Duration.zero;
   Duration _position = Duration.zero;
   List<String> _playlist = [];
+  List<String> _filteredPlaylist = [];
   int _currentIndex = 0;
+  String _searchQuery = '';
+  bool _isShuffleEnabled = false;
+  bool _isRepeatEnabled = false;
+  List<int> _shuffleOrder = [];
 
   AudioProvider() {
     _initAudioPlayer();
@@ -20,6 +25,9 @@ class AudioProvider with ChangeNotifier {
   void _initAudioPlayer() {
     _audioPlayer.playerStateStream.listen((state) {
       _isPlaying = state.playing;
+      if (state.processingState == ProcessingState.completed) {
+        _handleSongCompletion();
+      }
       notifyListeners();
     });
 
@@ -34,6 +42,15 @@ class AudioProvider with ChangeNotifier {
     });
   }
 
+  void _handleSongCompletion() {
+    if (_isRepeatEnabled) {
+      _audioPlayer.seek(Duration.zero);
+      _audioPlayer.play();
+    } else {
+      next();
+    }
+  }
+
   void _loadMockData() {
     _playlist = [
       'Song 1 - Artist 1',
@@ -41,7 +58,13 @@ class AudioProvider with ChangeNotifier {
       'Song 3 - Artist 3',
       'Song 4 - Artist 4',
       'Song 5 - Artist 5',
+      'Another Song - New Artist',
+      'Rock Song - Rock Band',
+      'Jazz Tune - Jazz Artist',
+      'Pop Hit - Pop Star',
+      'Classic Track - Classic Artist',
     ];
+    _filteredPlaylist = _playlist;
     _updateCurrentSong();
   }
 
@@ -50,8 +73,74 @@ class AudioProvider with ChangeNotifier {
   String get currentArtist => _currentArtist;
   Duration get duration => _duration;
   Duration get position => _position;
-  List<String> get playlist => _playlist;
+  List<String> get playlist => _filteredPlaylist;
   int get currentIndex => _currentIndex;
+  String get searchQuery => _searchQuery;
+  bool get isShuffleEnabled => _isShuffleEnabled;
+  bool get isRepeatEnabled => _isRepeatEnabled;
+
+  set currentIndex(int value) {
+    if (value >= 0 && value < _playlist.length) {
+      _currentIndex = value;
+      _updateCurrentSong();
+      notifyListeners();
+    }
+  }
+
+  void setSearchQuery(String query) {
+    _searchQuery = query;
+    _filterPlaylist();
+    notifyListeners();
+  }
+
+  void _filterPlaylist() {
+    if (_searchQuery.isEmpty) {
+      _filteredPlaylist = _playlist;
+    } else {
+      _filteredPlaylist = _playlist.where((song) {
+        final songInfo = song.toLowerCase();
+        return songInfo.contains(_searchQuery.toLowerCase());
+      }).toList();
+    }
+  }
+
+  void removeFromPlaylist(int index) {
+    if (index >= 0 && index < _playlist.length) {
+      _playlist.removeAt(index);
+      if (_currentIndex == index) {
+        if (_playlist.isEmpty) {
+          _currentIndex = 0;
+          _currentSong = 'No Song Selected';
+          _currentArtist = 'No Artist';
+        } else if (_currentIndex >= _playlist.length) {
+          _currentIndex = _playlist.length - 1;
+        }
+        _updateCurrentSong();
+      } else if (_currentIndex > index) {
+        _currentIndex--;
+      }
+      _filterPlaylist();
+      notifyListeners();
+    }
+  }
+
+  void toggleShuffle() {
+    _isShuffleEnabled = !_isShuffleEnabled;
+    if (_isShuffleEnabled) {
+      _generateShuffleOrder();
+    }
+    notifyListeners();
+  }
+
+  void toggleRepeat() {
+    _isRepeatEnabled = !_isRepeatEnabled;
+    notifyListeners();
+  }
+
+  void _generateShuffleOrder() {
+    _shuffleOrder = List.generate(_playlist.length, (index) => index);
+    _shuffleOrder.shuffle();
+  }
 
   Future<void> play() async {
     try {
@@ -70,16 +159,42 @@ class AudioProvider with ChangeNotifier {
   }
 
   Future<void> next() async {
-    if (_currentIndex < _playlist.length - 1) {
+    if (_isShuffleEnabled && _shuffleOrder.isNotEmpty) {
+      final currentShuffleIndex = _shuffleOrder.indexOf(_currentIndex);
+      if (currentShuffleIndex < _shuffleOrder.length - 1) {
+        _currentIndex = _shuffleOrder[currentShuffleIndex + 1];
+      } else {
+        _generateShuffleOrder();
+        _currentIndex = _shuffleOrder[0];
+      }
+    } else if (_currentIndex < _playlist.length - 1) {
       _currentIndex++;
-      _updateCurrentSong();
     }
+    _updateCurrentSong();
+    await play();
   }
 
   Future<void> previous() async {
-    if (_currentIndex > 0) {
+    if (_isShuffleEnabled && _shuffleOrder.isNotEmpty) {
+      final currentShuffleIndex = _shuffleOrder.indexOf(_currentIndex);
+      if (currentShuffleIndex > 0) {
+        _currentIndex = _shuffleOrder[currentShuffleIndex - 1];
+      } else {
+        _generateShuffleOrder();
+        _currentIndex = _shuffleOrder.last;
+      }
+    } else if (_currentIndex > 0) {
       _currentIndex--;
+    }
+    _updateCurrentSong();
+    await play();
+  }
+
+  void selectSong(int index) {
+    if (index >= 0 && index < _playlist.length) {
+      _currentIndex = index;
       _updateCurrentSong();
+      play();
     }
   }
 

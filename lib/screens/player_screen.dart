@@ -86,10 +86,13 @@ class PlayerScreen extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
                     IconButton(
-                      icon: const Icon(Icons.shuffle),
-                      onPressed: () {
-                        // TODO: Implement shuffle functionality
-                      },
+                      icon: Icon(
+                        Icons.shuffle,
+                        color: audioProvider.isShuffleEnabled
+                            ? Theme.of(context).colorScheme.primary
+                            : null,
+                      ),
+                      onPressed: audioProvider.toggleShuffle,
                     ),
                     IconButton(
                       icon: const Icon(Icons.skip_previous),
@@ -114,10 +117,13 @@ class PlayerScreen extends StatelessWidget {
                       onPressed: audioProvider.next,
                     ),
                     IconButton(
-                      icon: const Icon(Icons.repeat),
-                      onPressed: () {
-                        // TODO: Implement repeat functionality
-                      },
+                      icon: Icon(
+                        Icons.repeat,
+                        color: audioProvider.isRepeatEnabled
+                            ? Theme.of(context).colorScheme.primary
+                            : null,
+                      ),
+                      onPressed: audioProvider.toggleRepeat,
                     ),
                   ],
                 ),
