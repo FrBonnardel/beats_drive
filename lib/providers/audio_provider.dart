@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_session/audio_session.dart';
+import 'dart:io';
 
 class AudioProvider with ChangeNotifier {
   final AudioPlayer _audioPlayer = AudioPlayer();
@@ -19,7 +20,6 @@ class AudioProvider with ChangeNotifier {
 
   AudioProvider() {
     _initAudioPlayer();
-    _loadMockData();
   }
 
   void _initAudioPlayer() {
@@ -51,21 +51,14 @@ class AudioProvider with ChangeNotifier {
     }
   }
 
-  void _loadMockData() {
-    _playlist = [
-      'Song 1 - Artist 1',
-      'Song 2 - Artist 2',
-      'Song 3 - Artist 3',
-      'Song 4 - Artist 4',
-      'Song 5 - Artist 5',
-      'Another Song - New Artist',
-      'Rock Song - Rock Band',
-      'Jazz Tune - Jazz Artist',
-      'Pop Hit - Pop Star',
-      'Classic Track - Classic Artist',
-    ];
+  void updatePlaylist(List<String> musicFiles) {
+    _playlist = musicFiles;
     _filteredPlaylist = _playlist;
+    if (_currentIndex >= _playlist.length) {
+      _currentIndex = 0;
+    }
     _updateCurrentSong();
+    notifyListeners();
   }
 
   bool get isPlaying => _isPlaying;
@@ -97,9 +90,9 @@ class AudioProvider with ChangeNotifier {
     if (_searchQuery.isEmpty) {
       _filteredPlaylist = _playlist;
     } else {
-      _filteredPlaylist = _playlist.where((song) {
-        final songInfo = song.toLowerCase();
-        return songInfo.contains(_searchQuery.toLowerCase());
+      _filteredPlaylist = _playlist.where((filePath) {
+        final fileName = filePath.split('/').last.toLowerCase();
+        return fileName.contains(_searchQuery.toLowerCase());
       }).toList();
     }
   }
@@ -144,6 +137,9 @@ class AudioProvider with ChangeNotifier {
 
   Future<void> play() async {
     try {
+      if (_playlist.isEmpty) return;
+      final filePath = _playlist[_currentIndex];
+      await _audioPlayer.setFilePath(filePath);
       await _audioPlayer.play();
     } catch (e) {
       debugPrint('Error playing audio: $e');
@@ -200,9 +196,10 @@ class AudioProvider with ChangeNotifier {
 
   void _updateCurrentSong() {
     if (_playlist.isNotEmpty) {
-      final songInfo = _playlist[_currentIndex].split(' - ');
-      _currentSong = songInfo[0];
-      _currentArtist = songInfo[1];
+      final filePath = _playlist[_currentIndex];
+      final fileName = filePath.split('/').last;
+      _currentSong = fileName;
+      _currentArtist = 'Local Music'; // You could extract artist info from metadata if needed
       notifyListeners();
     }
   }

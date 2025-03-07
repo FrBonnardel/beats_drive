@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:beats_drive/screens/home_screen.dart';
 import 'package:beats_drive/providers/audio_provider.dart';
+import 'package:beats_drive/providers/music_provider.dart';
 
 void main() {
   runApp(const MyApp());
@@ -13,8 +14,11 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (context) => AudioProvider(),
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (context) => AudioProvider()),
+        ChangeNotifierProvider(create: (context) => MusicProvider()),
+      ],
       child: MaterialApp(
         title: 'Beats Drive',
         theme: ThemeData(

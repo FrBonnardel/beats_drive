@@ -1,18 +1,30 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:beats_drive/providers/audio_provider.dart';
+import 'package:beats_drive/providers/music_provider.dart';
 
 class LibraryScreen extends StatelessWidget {
   const LibraryScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<AudioProvider>(
-      builder: (context, audioProvider, child) {
+    return Consumer2<AudioProvider, MusicProvider>(
+      builder: (context, audioProvider, musicProvider, child) {
+        // Update AudioProvider's playlist when music files are scanned
+        if (musicProvider.musicFiles.isNotEmpty && audioProvider.playlist.isEmpty) {
+          audioProvider.updatePlaylist(musicProvider.musicFiles);
+        }
+
         return Scaffold(
           appBar: AppBar(
             title: const Text('Music Library'),
             actions: [
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                onPressed: () {
+                  musicProvider.scanMusicFiles();
+                },
+              ),
               IconButton(
                 icon: const Icon(Icons.search),
                 onPressed: () {
@@ -24,51 +36,74 @@ class LibraryScreen extends StatelessWidget {
               ),
             ],
           ),
-          body: ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: audioProvider.playlist.length,
-            itemBuilder: (context, index) {
-              final songInfo = audioProvider.playlist[index].split(' - ');
-              final song = songInfo[0];
-              final artist = songInfo[1];
-              final isPlaying = index == audioProvider.currentIndex;
-
-              return Card(
-                margin: const EdgeInsets.only(bottom: 8),
-                child: ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: Theme.of(context).colorScheme.primary,
-                    child: Text(
-                      song.isNotEmpty ? song[0] : '?',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
+          body: musicProvider.isScanning
+              ? const Center(
+                  child: CircularProgressIndicator(),
+                )
+              : musicProvider.error.isNotEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            musicProvider.error,
+                            style: const TextStyle(color: Colors.red),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 16),
+                          ElevatedButton(
+                            onPressed: () {
+                              musicProvider.scanMusicFiles();
+                            },
+                            child: const Text('Retry'),
+                          ),
+                        ],
                       ),
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.all(16),
+                      itemCount: audioProvider.playlist.length,
+                      itemBuilder: (context, index) {
+                        final filePath = audioProvider.playlist[index];
+                        final fileName = filePath.split('/').last;
+                        final isPlaying = index == audioProvider.currentIndex;
+
+                        return Card(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          child: ListTile(
+                            leading: CircleAvatar(
+                              backgroundColor: Theme.of(context).colorScheme.primary,
+                              child: Text(
+                                fileName.isNotEmpty ? fileName[0] : '?',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            title: Text(
+                              fileName,
+                              style: TextStyle(
+                                fontWeight: isPlaying ? FontWeight.bold : FontWeight.normal,
+                                color: isPlaying
+                                    ? Theme.of(context).colorScheme.primary
+                                    : null,
+                              ),
+                            ),
+                            subtitle: Text(filePath),
+                            trailing: IconButton(
+                              icon: const Icon(Icons.more_vert),
+                              onPressed: () {
+                                _showSongOptions(context, audioProvider, index);
+                              },
+                            ),
+                            onTap: () {
+                              audioProvider.selectSong(index);
+                            },
+                          ),
+                        );
+                      },
                     ),
-                  ),
-                  title: Text(
-                    song,
-                    style: TextStyle(
-                      fontWeight: isPlaying ? FontWeight.bold : FontWeight.normal,
-                      color: isPlaying
-                          ? Theme.of(context).colorScheme.primary
-                          : null,
-                    ),
-                  ),
-                  subtitle: Text(artist),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.more_vert),
-                    onPressed: () {
-                      _showSongOptions(context, audioProvider, index);
-                    },
-                  ),
-                  onTap: () {
-                    audioProvider.selectSong(index);
-                  },
-                ),
-              );
-            },
-          ),
         );
       },
     );
@@ -113,8 +148,8 @@ class LibraryScreen extends StatelessWidget {
     );
   }
 
-  void _showSongInfo(BuildContext context, String songInfo) {
-    final parts = songInfo.split(' - ');
+  void _showSongInfo(BuildContext context, String filePath) {
+    final fileName = filePath.split('/').last;
     showDialog(
       context: context,
       builder: (context) {
@@ -124,13 +159,13 @@ class LibraryScreen extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Title: ${parts[0]}'),
+              Text('Title: $fileName'),
               const SizedBox(height: 8),
-              Text('Artist: ${parts[1]}'),
+              Text('Path: $filePath'),
               const SizedBox(height: 8),
               const Text('Duration: 3:45'), // TODO: Add actual duration
               const SizedBox(height: 8),
-              const Text('Genre: Pop'), // TODO: Add actual genre
+              const Text('Genre: Local Music'), // TODO: Add actual genre
             ],
           ),
           actions: [
@@ -187,26 +222,25 @@ class MusicSearchDelegate extends SearchDelegate<String> {
     return ListView.builder(
       itemCount: audioProvider.playlist.length,
       itemBuilder: (context, index) {
-        final songInfo = audioProvider.playlist[index].split(' - ');
-        final song = songInfo[0];
-        final artist = songInfo[1];
+        final filePath = audioProvider.playlist[index];
+        final fileName = filePath.split('/').last;
 
         return ListTile(
           leading: CircleAvatar(
             backgroundColor: Theme.of(context).colorScheme.primary,
             child: Text(
-              song.isNotEmpty ? song[0] : '?',
+              fileName.isNotEmpty ? fileName[0] : '?',
               style: const TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.bold,
               ),
             ),
           ),
-          title: Text(song),
-          subtitle: Text(artist),
+          title: Text(fileName),
+          subtitle: Text(filePath),
           onTap: () {
             audioProvider.selectSong(index);
-            close(context, song);
+            close(context, fileName);
           },
         );
       },
