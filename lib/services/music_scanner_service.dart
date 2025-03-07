@@ -18,6 +18,12 @@ class MusicScannerService {
       if (await Permission.storage.request().isGranted) {
         return true;
       }
+
+      // If permissions are denied, check if we need to show rationale
+      if (await Permission.storage.status.isDenied) {
+        // Show rationale dialog
+        return false;
+      }
     }
     return false;
   }
@@ -33,18 +39,26 @@ class MusicScannerService {
         
         if (await musicDir.exists()) {
           try {
-            musicFiles.addAll(await _scanDirectory(musicDir.path));
+            final files = await _scanDirectory(musicDir.path);
+            musicFiles.addAll(files);
+            print('Found ${files.length} music files in Music directory');
           } catch (e) {
             print('Error scanning Music directory: $e');
           }
+        } else {
+          print('Music directory does not exist');
         }
 
         if (await downloadDir.exists()) {
           try {
-            musicFiles.addAll(await _scanDirectory(downloadDir.path));
+            final files = await _scanDirectory(downloadDir.path);
+            musicFiles.addAll(files);
+            print('Found ${files.length} music files in Download directory');
           } catch (e) {
             print('Error scanning Download directory: $e');
           }
+        } else {
+          print('Download directory does not exist');
         }
 
         // Try to get additional storage directories
@@ -52,7 +66,9 @@ class MusicScannerService {
         if (externalDirs != null) {
           for (var dir in externalDirs) {
             try {
-              musicFiles.addAll(await _scanDirectory(dir.path));
+              final files = await _scanDirectory(dir.path);
+              musicFiles.addAll(files);
+              print('Found ${files.length} music files in external directory ${dir.path}');
             } catch (e) {
               print('Error scanning external directory ${dir.path}: $e');
             }
@@ -65,6 +81,8 @@ class MusicScannerService {
           musicFiles.addAll(await _scanDirectory(documentsDir.path));
         }
       }
+
+      print('Total music files found: ${musicFiles.length}');
     } catch (e) {
       print('Error scanning music files: $e');
     }
@@ -76,7 +94,10 @@ class MusicScannerService {
     List<String> musicFiles = [];
     try {
       final dir = Directory(path);
-      if (!await dir.exists()) return musicFiles;
+      if (!await dir.exists()) {
+        print('Directory does not exist: $path');
+        return musicFiles;
+      }
 
       await for (var entity in dir.list(recursive: true)) {
         if (entity is File) {
@@ -95,7 +116,10 @@ class MusicScannerService {
   static Future<Map<String, dynamic>> getMusicFileInfo(String filePath) async {
     try {
       final file = File(filePath);
-      if (!await file.exists()) return {};
+      if (!await file.exists()) {
+        print('File does not exist: $filePath');
+        return {};
+      }
 
       final stat = await file.stat();
       return {

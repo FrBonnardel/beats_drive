@@ -34,12 +34,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
             title: const Text('Music Library'),
             actions: [
               IconButton(
+                key: const ValueKey('refresh_button'),
                 icon: const Icon(Icons.refresh),
                 onPressed: () {
                   musicProvider.scanMusicFiles();
                 },
               ),
               IconButton(
+                key: const ValueKey('search_button'),
                 icon: const Icon(Icons.search),
                 onPressed: () {
                   showSearch(
@@ -66,6 +68,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           ),
                           const SizedBox(height: 16),
                           ElevatedButton(
+                            key: const ValueKey('retry_button'),
                             onPressed: () {
                               musicProvider.scanMusicFiles();
                             },
@@ -83,6 +86,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         final isPlaying = index == audioProvider.currentIndex;
 
                         return Card(
+                          key: ValueKey('song_card_$index'),
                           margin: const EdgeInsets.only(bottom: 8),
                           child: ListTile(
                             leading: CircleAvatar(
@@ -106,6 +110,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                             ),
                             subtitle: Text(filePath),
                             trailing: IconButton(
+                              key: ValueKey('more_button_$index'),
                               icon: const Icon(Icons.more_vert),
                               onPressed: () {
                                 _showSongOptions(context, audioProvider, index);
@@ -132,6 +137,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               ListTile(
+                key: const ValueKey('add_to_playlist_option'),
                 leading: const Icon(Icons.playlist_add),
                 title: const Text('Add to Playlist'),
                 onTap: () {
@@ -140,6 +146,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 },
               ),
               ListTile(
+                key: const ValueKey('add_to_favorites_option'),
                 leading: const Icon(Icons.favorite_border),
                 title: const Text('Add to Favorites'),
                 onTap: () {
@@ -148,6 +155,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 },
               ),
               ListTile(
+                key: const ValueKey('song_info_option'),
                 leading: const Icon(Icons.info_outline),
                 title: const Text('Song Info'),
                 onTap: () {
@@ -184,6 +192,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
           ),
           actions: [
             TextButton(
+              key: const ValueKey('close_dialog_button'),
               onPressed: () => Navigator.pop(context),
               child: const Text('Close'),
             ),
@@ -203,6 +212,7 @@ class MusicSearchDelegate extends SearchDelegate<String> {
   List<Widget> buildActions(BuildContext context) {
     return [
       IconButton(
+        key: const ValueKey('clear_search_button'),
         icon: const Icon(Icons.clear),
         onPressed: () {
           query = '';
@@ -214,6 +224,7 @@ class MusicSearchDelegate extends SearchDelegate<String> {
   @override
   Widget buildLeading(BuildContext context) {
     return IconButton(
+      key: const ValueKey('back_button'),
       icon: const Icon(Icons.arrow_back),
       onPressed: () {
         close(context, '');
@@ -240,6 +251,7 @@ class MusicSearchDelegate extends SearchDelegate<String> {
         final fileName = filePath.split('/').last;
 
         return ListTile(
+          key: ValueKey('search_result_$index'),
           leading: CircleAvatar(
             backgroundColor: Theme.of(context).colorScheme.primary,
             child: Text(

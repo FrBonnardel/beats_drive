@@ -204,6 +204,14 @@ class AudioProvider with ChangeNotifier {
     }
   }
 
+  Future<void> seek(Duration position) async {
+    try {
+      await _audioPlayer.seek(position);
+    } catch (e) {
+      debugPrint('Error seeking audio: $e');
+    }
+  }
+
   @override
   void dispose() {
     _audioPlayer.dispose();

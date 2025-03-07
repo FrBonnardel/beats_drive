@@ -47,7 +47,7 @@ class PlaylistScreen extends StatelessWidget {
               final isPlaying = index == audioProvider.currentIndex;
 
               return Card(
-                key: ValueKey(song),
+                key: ValueKey('playlist_item_$index'),
                 margin: const EdgeInsets.only(bottom: 8),
                 child: ListTile(
                   leading: CircleAvatar(

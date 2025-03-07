@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../services/music_scanner_service.dart';
 
 class MusicProvider with ChangeNotifier {
@@ -26,7 +27,7 @@ class MusicProvider with ChangeNotifier {
 
       _musicFiles = await MusicScannerService.scanMusicFiles();
       if (_musicFiles.isEmpty) {
-        _error = 'No music files found. Make sure you have music files in your device.';
+        _error = 'No music files found. Make sure you have music files in your device\'s Music or Download folder.';
       } else {
         _error = '';
       }
