@@ -8,27 +8,53 @@ import '../services/media_notification_service.dart';
 import '../services/playback_state_service.dart';
 import '../services/app_state_service.dart';
 import '../services/playlist_generator_service.dart';
+import '../models/music_models.dart';
+import 'package:flutter/services.dart';
 
 class AudioProvider with ChangeNotifier {
-  final AudioPlayer _audioPlayer = AudioPlayer();
+  final AudioPlayer _player = AudioPlayer();
   List<String> _playlist = [];
-  int _currentIndex = 0;
+  int _currentIndex = -1;
   bool _isPlaying = false;
+  bool _isShuffleEnabled = false;
+  List<int> _shuffledIndices = [];
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   Map<String, dynamic>? _currentMetadata;
   String _searchQuery = '';
-  bool _isShuffleEnabled = false;
   bool _isRepeatEnabled = false;
-  List<int> _shuffleOrder = [];
   String _currentSong = '';
   String _currentArtist = '';
+  static const _channel = MethodChannel('com.beats_drive/media_store');
 
-  Stream<int?> get currentIndexStream => _audioPlayer.currentIndexStream;
+  Stream<int?> get currentIndexStream => _player.currentIndexStream;
 
   AudioProvider() {
-    _setupAudioPlayer();
-    _restoreState();
+    _player.playerStateStream.listen((state) {
+      _isPlaying = state.playing;
+      if (state.processingState == ProcessingState.completed) {
+        _handleSongCompletion();
+      }
+      notifyListeners();
+    });
+
+    _player.durationStream.listen((duration) {
+      _duration = duration ?? Duration.zero;
+      notifyListeners();
+    });
+
+    _player.positionStream.listen((position) {
+      _position = position;
+      _updateMediaNotification();
+      notifyListeners();
+    });
+
+    _player.currentIndexStream.listen((index) {
+      if (index != null && index != _currentIndex) {
+        _currentIndex = index;
+        notifyListeners();
+      }
+    });
   }
 
   Future<void> _restoreState() async {
@@ -37,7 +63,7 @@ class AudioProvider with ChangeNotifier {
     // Restore playlist
     if (state['playlist'] != null && state['playlist'].isNotEmpty) {
       _playlist = List<String>.from(state['playlist']);
-      await _audioPlayer.setAudioSource(
+      await _player.setAudioSource(
         ConcatenatingAudioSource(
           children: _playlist.map((file) => AudioSource.file(file)).toList(),
         ),
@@ -52,10 +78,10 @@ class AudioProvider with ChangeNotifier {
 
       if (lastPlayedIndex != -1) {
         _currentIndex = lastPlayedIndex;
-        await _audioPlayer.seek(state['position'], index: lastPlayedIndex);
+        await _player.seek(state['position'], index: lastPlayedIndex);
         // Only restore playing state if it was playing before
         if (state['isPlaying'] == true) {
-          await _audioPlayer.play();
+          await _player.play();
         }
       }
     }
@@ -82,7 +108,7 @@ class AudioProvider with ChangeNotifier {
   }
 
   void _setupAudioPlayer() {
-    _audioPlayer.playerStateStream.listen((state) {
+    _player.playerStateStream.listen((state) {
       _isPlaying = state.playing;
       if (state.processingState == ProcessingState.completed) {
         _handleSongCompletion();
@@ -91,19 +117,19 @@ class AudioProvider with ChangeNotifier {
       notifyListeners();
     });
 
-    _audioPlayer.durationStream.listen((duration) {
+    _player.durationStream.listen((duration) {
       _duration = duration ?? Duration.zero;
       notifyListeners();
     });
 
-    _audioPlayer.positionStream.listen((position) {
+    _player.positionStream.listen((position) {
       _position = position;
       _updateMediaNotification();
       _saveState();
       notifyListeners();
     });
 
-    _audioPlayer.currentIndexStream.listen((index) async {
+    _player.currentIndexStream.listen((index) async {
       _currentIndex = index ?? 0;
       if (index != null && index < _playlist.length) {
         _currentSong = _playlist[index].split('/').last;
@@ -128,57 +154,63 @@ class AudioProvider with ChangeNotifier {
     }
   }
 
-  Future<void> updatePlaylist(List<String> files) async {
-    // Only update if the playlist is different
-    if (_playlist != files) {
-      _playlist = files;
-      await _audioPlayer.setAudioSource(
-        ConcatenatingAudioSource(
-          children: files.map((file) => AudioSource.file(file)).toList(),
-        ),
+  Future<void> updatePlaylist(List<String> uris) async {
+    if (uris.isEmpty) return;
+
+    _playlist = uris;
+    _currentIndex = 0;
+    _shuffledIndices = List.generate(uris.length, (index) => index);
+
+    try {
+      final sources = await Future.wait(
+        uris.map((uri) => _getAudioSource(uri))
       );
-      // Get metadata for the current song if we have one
-      if (_currentIndex >= 0 && _currentIndex < files.length) {
-        _currentMetadata = await MetadataService.getMetadata(files[_currentIndex]);
-        _currentArtist = _currentMetadata?['artist'] ?? 'Unknown Artist';
-        _currentSong = files[_currentIndex].split('/').last;
-      } else if (files.isNotEmpty) {
-        _currentMetadata = await MetadataService.getMetadata(files[0]);
-        _currentArtist = _currentMetadata?['artist'] ?? 'Unknown Artist';
-        _currentSong = files[0].split('/').last;
-      }
-      // Restore playback state after updating playlist
-      await restorePlaybackState();
-      notifyListeners();
+
+      await _player.setAudioSource(
+        ConcatenatingAudioSource(children: sources),
+        initialIndex: 0,
+      );
+    } catch (e) {
+      debugPrint('Error setting audio source: $e');
+    }
+  }
+
+  Future<AudioSource> _getAudioSource(String uri) async {
+    try {
+      // Create an AudioSource directly from the content URI
+      return AudioSource.uri(Uri.parse(uri), tag: uri);
+    } catch (e) {
+      debugPrint('Error getting audio source: $e');
+      rethrow;
     }
   }
 
   Future<void> selectSong(int index) async {
     if (index >= 0 && index < _playlist.length) {
-      await _audioPlayer.seek(Duration.zero, index: index);
-      await _audioPlayer.play();
+      await _player.seek(Duration.zero, index: index);
+      await _player.play();
     }
   }
 
   Future<void> play() async {
-    await _audioPlayer.play();
+    await _player.play();
   }
 
   Future<void> pause() async {
-    await _audioPlayer.pause();
+    await _player.pause();
   }
 
   Future<void> stop() async {
-    await _audioPlayer.stop();
+    await _player.stop();
     await MediaNotificationService.hideNotification();
   }
 
   Future<void> seek(Duration position) async {
-    await _audioPlayer.seek(position);
+    await _player.seek(position);
   }
 
   Future<void> setVolume(double volume) async {
-    await _audioPlayer.setVolume(volume);
+    await _player.setVolume(volume);
   }
 
   void setSearchQuery(String query) {
@@ -200,8 +232,8 @@ class AudioProvider with ChangeNotifier {
 
   void _handleSongCompletion() async {
     if (_isRepeatEnabled) {
-      _audioPlayer.seek(Duration.zero);
-      _audioPlayer.play();
+      _player.seek(Duration.zero);
+      _player.play();
     } else {
       // Mark current song as played
       if (_currentIndex >= 0 && _currentIndex < _playlist.length) {
@@ -233,7 +265,7 @@ class AudioProvider with ChangeNotifier {
   @override
   void dispose() {
     _saveState(); // Save state before disposing
-    _audioPlayer.dispose();
+    _player.dispose();
     MediaNotificationService.hideNotification();
     super.dispose();
   }
@@ -273,7 +305,7 @@ class AudioProvider with ChangeNotifier {
   Duration get position => _position;
   Duration get duration => _duration;
   Map<String, dynamic>? get currentMetadata => _currentMetadata;
-  AudioPlayer get audioPlayer => _audioPlayer;
+  AudioPlayer get audioPlayer => _player;
   String get searchQuery => _searchQuery;
   bool get isShuffleEnabled => _isShuffleEnabled;
   bool get isRepeatEnabled => _isRepeatEnabled;
@@ -306,10 +338,14 @@ class AudioProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  void toggleShuffle() {
+  Future<void> toggleShuffle() async {
     _isShuffleEnabled = !_isShuffleEnabled;
     if (_isShuffleEnabled) {
-      _generateShuffleOrder();
+      _shuffledIndices.shuffle();
+      await _player.setShuffleModeEnabled(true);
+    } else {
+      _shuffledIndices = List.generate(_playlist.length, (index) => index);
+      await _player.setShuffleModeEnabled(false);
     }
     notifyListeners();
   }
@@ -317,23 +353,6 @@ class AudioProvider with ChangeNotifier {
   void toggleRepeat() {
     _isRepeatEnabled = !_isRepeatEnabled;
     notifyListeners();
-  }
-
-  void _generateShuffleOrder() {
-    _shuffleOrder = List.generate(_playlist.length, (index) => index);
-    _shuffleOrder.shuffle();
-  }
-
-  int _getNextIndex() {
-    if (_isShuffleEnabled) {
-      final currentShuffleIndex = _shuffleOrder.indexOf(_currentIndex);
-      if (currentShuffleIndex < _shuffleOrder.length - 1) {
-        return _shuffleOrder[currentShuffleIndex + 1];
-      }
-      _generateShuffleOrder();
-      return _shuffleOrder[0];
-    }
-    return _currentIndex + 1;
   }
 
   Future<void> restorePlaybackState() async {
@@ -346,9 +365,9 @@ class AudioProvider with ChangeNotifier {
 
       if (lastPlayedIndex != -1) {
         _currentIndex = lastPlayedIndex;
-        await _audioPlayer.seek(state['position'], index: lastPlayedIndex);
+        await _player.seek(state['position'], index: lastPlayedIndex);
         if (state['isPlaying']) {
-          await _audioPlayer.play();
+          await _player.play();
         }
       }
     }

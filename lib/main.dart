@@ -17,14 +17,20 @@ void main() async {
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  const MyApp({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AudioProvider()),
-        ChangeNotifierProvider(create: (_) => MusicProvider()),
+        ChangeNotifierProxyProvider<AudioProvider, MusicProvider>(
+          create: (context) => MusicProvider(
+            audioProvider: Provider.of<AudioProvider>(context, listen: false),
+          ),
+          update: (context, audioProvider, previous) =>
+              previous ?? MusicProvider(audioProvider: audioProvider),
+        ),
       ],
       child: MaterialApp(
         title: 'Beats Drive',

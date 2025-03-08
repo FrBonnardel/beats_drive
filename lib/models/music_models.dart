@@ -1,0 +1,184 @@
+import 'dart:typed_data';
+
+class Album {
+  final String id;
+  final String name;
+  final String artist;
+  final Uint8List? artwork;
+  final List<Song> songs;
+  final int year;
+  final String albumArtUri;
+
+  Album({
+    required this.id,
+    required this.name,
+    required this.artist,
+    this.artwork,
+    required this.songs,
+    this.year = 0,
+    required this.albumArtUri,
+  });
+
+  int get totalDuration => songs.fold(0, (sum, song) => sum + song.duration);
+  
+  String get displayName => name.isEmpty ? 'Unknown Album' : name;
+  String get displayArtist => artist.isEmpty ? 'Unknown Artist' : artist;
+}
+
+class Artist {
+  final String id;
+  final String name;
+  final List<Album> albums;
+  final List<Song> songs;
+
+  Artist({
+    required this.id,
+    required this.name,
+    required this.albums,
+    required this.songs,
+  });
+
+  int get totalSongs => songs.length;
+  int get totalAlbums => albums.length;
+  String get displayName => name.isEmpty ? 'Unknown Artist' : name;
+}
+
+class Song {
+  final String id;
+  final String title;
+  final String artist;
+  final String album;
+  final String albumId;
+  final int duration;
+  final String uri;
+  final int trackNumber;
+  final int year;
+  final int dateAdded;
+  final String albumArtUri;
+
+  Song({
+    required this.id,
+    required this.title,
+    required this.artist,
+    required this.album,
+    required this.albumId,
+    required this.duration,
+    required this.uri,
+    required this.trackNumber,
+    required this.year,
+    required this.dateAdded,
+    required this.albumArtUri,
+  });
+
+  factory Song.fromMap(Map<String, dynamic> map) {
+    return Song(
+      id: map['_id'] as String? ?? '',
+      title: map['title'] as String? ?? 'Unknown Title',
+      artist: map['artist'] as String? ?? 'Unknown Artist',
+      album: map['album'] as String? ?? 'Unknown Album',
+      albumId: map['album_id'] as String? ?? '',
+      duration: map['duration'] as int? ?? 0,
+      uri: map['uri'] as String? ?? '',
+      trackNumber: map['track'] as int? ?? 0,
+      year: map['year'] as int? ?? 0,
+      dateAdded: map['date_added'] as int? ?? 0,
+      albumArtUri: map['album_art_uri'] as String? ?? '',
+    );
+  }
+
+  String get displayTitle => title.isEmpty ? 'Unknown Title' : title;
+  String get displayArtist => artist.isEmpty ? 'Unknown Artist' : artist;
+  String get displayAlbum => album.isEmpty ? 'Unknown Album' : album;
+
+  Song copyWith({
+    String? id,
+    String? title,
+    String? artist,
+    String? album,
+    String? albumId,
+    int? duration,
+    String? uri,
+    int? trackNumber,
+    int? year,
+    int? dateAdded,
+    String? albumArtUri,
+  }) {
+    return Song(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      artist: artist ?? this.artist,
+      album: album ?? this.album,
+      albumId: albumId ?? this.albumId,
+      duration: duration ?? this.duration,
+      uri: uri ?? this.uri,
+      trackNumber: trackNumber ?? this.trackNumber,
+      year: year ?? this.year,
+      dateAdded: dateAdded ?? this.dateAdded,
+      albumArtUri: albumArtUri ?? this.albumArtUri,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Song &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          title == other.title &&
+          artist == other.artist &&
+          album == other.album &&
+          albumId == other.albumId &&
+          duration == other.duration &&
+          uri == other.uri &&
+          trackNumber == other.trackNumber &&
+          year == other.year &&
+          dateAdded == other.dateAdded &&
+          albumArtUri == other.albumArtUri;
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      title.hashCode ^
+      artist.hashCode ^
+      album.hashCode ^
+      albumId.hashCode ^
+      duration.hashCode ^
+      uri.hashCode ^
+      trackNumber.hashCode ^
+      year.hashCode ^
+      dateAdded.hashCode ^
+      albumArtUri.hashCode;
+}
+
+class Playlist {
+  final String id;
+  final String name;
+  final List<Song> songs;
+  final DateTime createdAt;
+  final DateTime modifiedAt;
+
+  Playlist({
+    required this.id,
+    required this.name,
+    required this.songs,
+    required this.createdAt,
+    required this.modifiedAt,
+  });
+
+  int get totalDuration => songs.fold(0, (sum, song) => sum + song.duration);
+  int get songCount => songs.length;
+
+  Playlist copyWith({
+    String? name,
+    List<Song>? songs,
+    DateTime? modifiedAt,
+  }) {
+    return Playlist(
+      id: id,
+      name: name ?? this.name,
+      songs: songs ?? this.songs,
+      createdAt: createdAt,
+      modifiedAt: modifiedAt ?? DateTime.now(),
+    );
+  }
+} 

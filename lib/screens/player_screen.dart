@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:async';
+import 'dart:math' as math;
 import '../providers/audio_provider.dart';
 import '../providers/music_provider.dart';
 import '../services/metadata_service.dart';
 import '../services/media_notification_service.dart';
 import '../services/playback_state_service.dart';
+import '../models/music_models.dart';
 
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({Key? key}) : super(key: key);
@@ -31,11 +33,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final musicProvider = Provider.of<MusicProvider>(context, listen: false);
     final audioProvider = Provider.of<AudioProvider>(context, listen: false);
     
-    if (musicProvider.musicFiles.isEmpty) {
+    if (musicProvider.songs.isEmpty) {
       await musicProvider.scanMusicFiles();
     }
     
-    final musicFiles = musicProvider.musicFiles.map((file) => file['data'] as String).toList();
+    final musicFiles = musicProvider.songs.map((song) => song.uri).toList();
     await audioProvider.updatePlaylist(musicFiles);
     await _setupMediaNotificationListener();
     await _loadMetadata();
@@ -137,8 +139,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 child: Column(
                   children: [
                     Slider(
-                      value: audioProvider.position.inSeconds.toDouble(),
-                      max: audioProvider.duration.inSeconds.toDouble(),
+                      value: audioProvider.duration.inSeconds > 0 
+                        ? audioProvider.position.inSeconds.toDouble().clamp(0, audioProvider.duration.inSeconds.toDouble())
+                        : 0,
+                      max: math.max(audioProvider.duration.inSeconds.toDouble(), 0.0001),
                       onChanged: (value) {
                         audioProvider.seek(Duration(seconds: value.toInt()));
                       },

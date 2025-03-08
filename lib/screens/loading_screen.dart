@@ -85,7 +85,7 @@ class _LoadingScreenState extends State<LoadingScreen> {
                       if (musicProvider.isScanning) ...[
                         const SizedBox(height: 10),
                         Text(
-                          'Found ${musicProvider.musicFiles.length} music files',
+                          'Found ${musicProvider.songs.length} music files',
                           style: theme.textTheme.bodyLarge?.copyWith(
                             color: isDark ? Colors.white70 : Colors.black87,
                           ),
