@@ -64,17 +64,10 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
     }
   }
 
-  String _formatDuration(int milliseconds) {
-    final duration = Duration(milliseconds: milliseconds);
-    final minutes = duration.inMinutes;
-    final seconds = (duration.inSeconds % 60).toString().padLeft(2, '0');
-    return '$minutes:$seconds';
-  }
-
   @override
   Widget build(BuildContext context) {
-    return Consumer<AudioProvider>(
-      builder: (context, audioProvider, child) {
+    return Consumer2<AudioProvider, MusicProvider>(
+      builder: (context, audioProvider, musicProvider, child) {
         return Scaffold(
           appBar: AppBar(
             title: const Text('Current Playlist'),
@@ -123,31 +116,50 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                   },
                   itemBuilder: (context, index) {
                     final uri = audioProvider.playlist[index];
-                    final song = _songCache[uri];
-                    final albumArt = _artworkCache[uri];
+                    final song = musicProvider.songs.firstWhere(
+                      (song) => song.uri == uri,
+                      orElse: () => Song(
+                        id: '',
+                        title: uri.split('/').last,
+                        artist: 'Unknown Artist',
+                        album: 'Unknown Album',
+                        albumId: '',
+                        duration: 0,
+                        uri: uri,
+                        trackNumber: 0,
+                        year: 0,
+                        dateAdded: 0,
+                        albumArtUri: '',
+                      ),
+                    );
                     final isPlaying = index == audioProvider.currentIndex;
 
                     return ListTile(
                       key: Key('playlist_item_$index'),
-                      leading: Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: Colors.grey[800],
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: albumArt != null
-                            ? ClipRRect(
-                                borderRadius: BorderRadius.circular(4),
-                                child: Image.memory(
-                                  albumArt,
-                                  fit: BoxFit.cover,
-                                ),
-                              )
-                            : const Icon(Icons.music_note, color: Colors.white70),
+                      leading: FutureBuilder<Uint8List?>(
+                        future: song.id.isNotEmpty ? musicProvider.loadAlbumArt(song.id) : Future.value(null),
+                        builder: (context, snapshot) {
+                          return Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[800],
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: snapshot.hasData && snapshot.data != null
+                                ? ClipRRect(
+                                    borderRadius: BorderRadius.circular(4),
+                                    child: Image.memory(
+                                      snapshot.data!,
+                                      fit: BoxFit.cover,
+                                    ),
+                                  )
+                                : const Icon(Icons.music_note, color: Colors.white70),
+                          );
+                        },
                       ),
                       title: Text(
-                        song?.title ?? uri.split('/').last,
+                        song.title,
                         style: TextStyle(
                           fontWeight: isPlaying ? FontWeight.bold : FontWeight.normal,
                           color: isPlaying
@@ -158,7 +170,7 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                         overflow: TextOverflow.ellipsis,
                       ),
                       subtitle: Text(
-                        song?.artist ?? 'Unknown Artist',
+                        song.artist,
                         style: TextStyle(
                           color: Colors.grey[400],
                           fontSize: 12,
@@ -177,7 +189,7 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                             ),
                           const SizedBox(width: 8),
                           Text(
-                            _formatDuration(song?.duration ?? 0),
+                            _formatDuration(song.duration),
                             style: TextStyle(
                               color: Colors.grey[400],
                               fontSize: 12,
@@ -200,5 +212,12 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
         );
       },
     );
+  }
+
+  String _formatDuration(int milliseconds) {
+    final duration = Duration(milliseconds: milliseconds);
+    final minutes = duration.inMinutes;
+    final seconds = (duration.inSeconds % 60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
   }
 } 

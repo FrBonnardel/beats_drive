@@ -164,8 +164,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             );
           }
 
-          final currentSong = audioProvider.currentSong;
-          final currentArtist = audioProvider.currentArtist;
+          final currentSong = audioProvider.getCurrentSong();
           final metadata = audioProvider.currentMetadata;
 
           return Column(
@@ -212,7 +211,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       child: Column(
                         children: [
                           Text(
-                            metadata?['title'] ?? currentSong,
+                            currentSong.title,
                             style: const TextStyle(
                               fontSize: 24,
                               fontWeight: FontWeight.bold,
@@ -224,7 +223,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            metadata?['artist'] ?? currentArtist,
+                            currentSong.artist,
                             style: TextStyle(
                               fontSize: 16,
                               color: Colors.grey[400],
@@ -233,19 +232,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
-                          if (metadata?['album'] != null) ...[
-                            const SizedBox(height: 4),
-                            Text(
-                              metadata!['album'] as String,
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: Colors.grey[600],
-                              ),
-                              textAlign: TextAlign.center,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                          const SizedBox(height: 4),
+                          Text(
+                            currentSong.album,
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey[600],
                             ),
-                          ],
+                            textAlign: TextAlign.center,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ],
                       ),
                     ),

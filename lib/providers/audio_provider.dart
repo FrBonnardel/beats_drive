@@ -37,11 +37,13 @@ class AudioProvider with ChangeNotifier {
   Stream<int?> get currentIndexStream => _player.currentIndexStream;
 
   AudioProvider() {
+    _setupMediaNotificationListeners();
     _player.playerStateStream.listen((state) {
       _isPlaying = state.playing;
       if (state.processingState == ProcessingState.completed) {
         _handleSongCompletion();
       }
+      _updateMediaNotification();
       notifyListeners();
     });
 
@@ -52,18 +54,26 @@ class AudioProvider with ChangeNotifier {
 
     _player.positionStream.listen((position) {
       _position = position;
-      _updateMediaNotification();
       notifyListeners();
     });
 
     _player.currentIndexStream.listen((index) {
       if (index != null && index != _currentIndex) {
         _currentIndex = index;
+        _updateMediaNotification();
         notifyListeners();
       }
     });
 
     _setupAudioPlayer();
+  }
+
+  void _setupMediaNotificationListeners() {
+    MediaNotificationService.onPlay.listen((_) => play());
+    MediaNotificationService.onPause.listen((_) => pause());
+    MediaNotificationService.onNext.listen((_) => next());
+    MediaNotificationService.onPrevious.listen((_) => previous());
+    MediaNotificationService.onStop.listen((_) => stop());
   }
 
   Future<void> _restoreState() async {
@@ -157,38 +167,41 @@ class AudioProvider with ChangeNotifier {
       return;
     }
 
-    final currentUri = _playlist[_currentIndex];
-    final musicProvider = Provider.of<MusicProvider>(
-      _context!,
-      listen: false,
-    );
+    final song = getCurrentSong();
+    final musicProvider = Provider.of<MusicProvider>(_context!, listen: false);
 
-    final song = musicProvider.songs.firstWhere(
-      (song) => song.uri == currentUri,
-      orElse: () => Song(
-        id: '',
-        title: currentUri.split('/').last,
-        artist: 'Unknown Artist',
-        album: 'Unknown Album',
-        albumId: '',
-        duration: 0,
-        uri: currentUri,
-        trackNumber: 0,
-        year: 0,
-        dateAdded: 0,
-        albumArtUri: '',
-      ),
-    );
+    // Update current metadata
+    _currentMetadata = {
+      'title': song.title,
+      'artist': song.artist,
+      'album': song.album,
+    };
+    _currentSong = song.title;
+    _currentArtist = song.artist;
 
-    // Load album art
-    musicProvider.loadAlbumArt(song.id).then((albumArt) {
+    // Load album art and show notification
+    if (song.id.isNotEmpty) {
+      musicProvider.loadAlbumArt(song.id).then((albumArt) {
+        if (albumArt != null) {
+          _currentMetadata!['albumArt'] = albumArt;
+          MediaNotificationService.showNotification(
+            title: song.title,
+            author: song.artist,
+            image: albumArt,
+            play: _isPlaying,
+          );
+        }
+        notifyListeners();
+      });
+    } else {
       MediaNotificationService.showNotification(
         title: song.title,
         author: song.artist,
-        image: albumArt,
+        image: null,
         play: _isPlaying,
       );
-    });
+      notifyListeners();
+    }
   }
 
   Future<void> updatePlaylist(List<String> uris) async {
@@ -435,5 +448,44 @@ class AudioProvider with ChangeNotifier {
     
     final dailyPlaylist = await PlaylistGeneratorService.generateDailyPlaylist(_playlist);
     await updatePlaylist(dailyPlaylist);
+  }
+
+  // Add getCurrentSong method to get the current song from MusicProvider
+  Song getCurrentSong() {
+    if (_context == null || _currentIndex < 0 || _currentIndex >= _playlist.length) {
+      return Song(
+        id: '',
+        title: 'No song playing',
+        artist: 'Unknown Artist',
+        album: 'Unknown Album',
+        albumId: '',
+        duration: 0,
+        uri: '',
+        trackNumber: 0,
+        year: 0,
+        dateAdded: 0,
+        albumArtUri: '',
+      );
+    }
+
+    final currentUri = _playlist[_currentIndex];
+    final musicProvider = Provider.of<MusicProvider>(_context!, listen: false);
+    
+    return musicProvider.songs.firstWhere(
+      (song) => song.uri == currentUri,
+      orElse: () => Song(
+        id: '',
+        title: currentUri.split('/').last,
+        artist: 'Unknown Artist',
+        album: 'Unknown Album',
+        albumId: '',
+        duration: 0,
+        uri: currentUri,
+        trackNumber: 0,
+        year: 0,
+        dateAdded: 0,
+        albumArtUri: '',
+      ),
+    );
   }
 } 
