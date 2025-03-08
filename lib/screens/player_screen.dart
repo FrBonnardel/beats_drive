@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:async';
 import '../providers/audio_provider.dart';
+import '../providers/music_provider.dart';
 import '../services/metadata_service.dart';
 import '../services/media_notification_service.dart';
+import '../services/playback_state_service.dart';
 
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({Key? key}) : super(key: key);
@@ -13,70 +15,50 @@ class PlayerScreen extends StatefulWidget {
 }
 
 class _PlayerScreenState extends State<PlayerScreen> {
-  bool _isLoading = true;
   Map<String, dynamic>? _metadata;
+  bool _isLoading = true;
   StreamSubscription? _audioSubscription;
 
   @override
   void initState() {
     super.initState();
-    _loadMetadata();
-    _setupAudioListener();
-    _setupMediaNotificationListener();
-  }
-
-  void _setupMediaNotificationListener() {
-    MediaNotificationService.onPlay.listen((_) {
-      final audioProvider = Provider.of<AudioProvider>(context, listen: false);
-      audioProvider.play();
-    });
-
-    MediaNotificationService.onPause.listen((_) {
-      final audioProvider = Provider.of<AudioProvider>(context, listen: false);
-      audioProvider.pause();
-    });
-
-    MediaNotificationService.onStop.listen((_) {
-      final audioProvider = Provider.of<AudioProvider>(context, listen: false);
-      audioProvider.stop();
-    });
-
-    MediaNotificationService.onNext.listen((_) {
-      final audioProvider = Provider.of<AudioProvider>(context, listen: false);
-      audioProvider.selectSong(audioProvider.currentIndex + 1);
-    });
-
-    MediaNotificationService.onPrevious.listen((_) {
-      final audioProvider = Provider.of<AudioProvider>(context, listen: false);
-      audioProvider.selectSong(audioProvider.currentIndex - 1);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initializePlayer();
     });
   }
 
-  void _setupAudioListener() {
+  Future<void> _initializePlayer() async {
+    final musicProvider = Provider.of<MusicProvider>(context, listen: false);
     final audioProvider = Provider.of<AudioProvider>(context, listen: false);
-    _audioSubscription = audioProvider.audioPlayer.playerStateStream.listen((_) {
-      if (mounted) {
-        _loadMetadata();
+    
+    if (musicProvider.musicFiles.isEmpty) {
+      await musicProvider.scanMusicFiles();
+    }
+    
+    final musicFiles = musicProvider.musicFiles.map((file) => file['data'] as String).toList();
+    await audioProvider.updatePlaylist(musicFiles);
+    await _setupMediaNotificationListener();
+    await _loadMetadata();
+    setState(() {
+      _isLoading = false;
+    });
+  }
+
+  Future<void> _setupMediaNotificationListener() async {
+    final audioProvider = Provider.of<AudioProvider>(context, listen: false);
+    _audioSubscription = audioProvider.currentIndexStream.listen((index) async {
+      if (index != null && index < audioProvider.playlist.length) {
+        await _loadMetadata();
       }
     });
   }
 
   Future<void> _loadMetadata() async {
-    if (!mounted) return;
-    
     final audioProvider = Provider.of<AudioProvider>(context, listen: false);
-    
-    if (audioProvider.playlist.isNotEmpty && audioProvider.currentIndex < audioProvider.playlist.length) {
-      final song = audioProvider.playlist[audioProvider.currentIndex];
-      final metadata = await MetadataService.getMetadata(song);
-      
-      if (mounted) {
-        setState(() {
-          _metadata = metadata;
-          _isLoading = false;
-        });
-        audioProvider.setMetadata(metadata);
-      }
+    if (audioProvider.currentIndex >= 0 && audioProvider.currentIndex < audioProvider.playlist.length) {
+      final songPath = audioProvider.playlist[audioProvider.currentIndex];
+      _metadata = await MetadataService.getMetadata(songPath);
+      setState(() {});
     }
   }
 
@@ -107,36 +89,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               // Album Art
-              Container(
-                width: 300,
-                height: 300,
-                decoration: BoxDecoration(
-                  color: Colors.grey[800],
-                  borderRadius: BorderRadius.circular(10),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.3),
-                      blurRadius: 10,
-                      offset: const Offset(0, 5),
-                    ),
-                  ],
-                ),
-                child: _metadata?['albumArt'] != null
-                    ? ClipRRect(
-                        borderRadius: BorderRadius.circular(10),
-                        child: Image.memory(
-                          _metadata!['albumArt'],
-                          fit: BoxFit.cover,
-                          gaplessPlayback: true,
-                          errorBuilder: (context, error, stackTrace) {
-                            debugPrint('Error loading album art: $error');
-                            debugPrint('Stack trace: $stackTrace');
-                            return _buildPlaceholderArtwork();
-                          },
-                        ),
-                      )
-                    : _buildPlaceholderArtwork(),
-              ),
+              _buildAlbumArt(),
               const SizedBox(height: 20),
               
               // Song Info
@@ -270,6 +223,39 @@ class _PlayerScreenState extends State<PlayerScreen> {
             ],
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildAlbumArt() {
+    return Container(
+      width: 300,
+      height: 300,
+      decoration: BoxDecoration(
+        color: Colors.grey[800],
+        borderRadius: BorderRadius.circular(10),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.3),
+            blurRadius: 10,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: _metadata?['albumArt'] != null
+            ? Image.memory(
+                _metadata!['albumArt'],
+                fit: BoxFit.cover,
+                gaplessPlayback: true,
+                errorBuilder: (context, error, stackTrace) {
+                  debugPrint('Error loading album art: $error');
+                  debugPrint('Stack trace: $stackTrace');
+                  return _buildPlaceholderArtwork();
+                },
+              )
+            : _buildPlaceholderArtwork(),
       ),
     );
   }

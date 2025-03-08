@@ -2,6 +2,8 @@ import 'dart:io';
 import 'package:just_audio/just_audio.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:typed_data';
+import 'package:flutter/services.dart';
+import 'package:beats_drive/services/album_art_service.dart';
 
 class MetadataService {
   static final Map<String, Map<String, dynamic>> _metadataCache = {};
@@ -9,77 +11,48 @@ class MetadataService {
   static const int _headerSize = 64 * 1024;
 
   static Future<Map<String, dynamic>> getMetadata(String filePath) async {
-    // Check cache first
-    if (_metadataCache.containsKey(filePath)) {
-      return _metadataCache[filePath]!;
-    }
-
     try {
-      final file = File(filePath);
-      if (!await file.exists()) {
-        debugPrint('File does not exist: $filePath');
-        return {};
+      // Get album ID from the file path
+      final albumId = await _getAlbumId(filePath);
+      
+      // Get album artwork if available
+      Uint8List? albumArt;
+      if (albumId != null) {
+        albumArt = await AlbumArtService.getAlbumArt(albumId);
       }
 
-      // Get file stats for quick metadata
-      final fileStats = await file.stat();
-      final fileName = file.path.split('/').last;
-      final nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
-      final extension = fileName.split('.').last.toLowerCase();
-      
-      // Initialize result with basic info
-      final result = {
-        'title': nameWithoutExt,
+      return {
+        'title': _getFileName(filePath),
+        'artist': 'Unknown Artist', // You can implement artist detection if needed
+        'album': 'Unknown Album', // You can implement album detection if needed
+        'albumArt': albumArt,
+        'duration': 0, // You can implement duration detection if needed
+      };
+    } catch (e) {
+      print('Error getting metadata: $e');
+      return {
+        'title': _getFileName(filePath),
         'artist': 'Unknown Artist',
         'album': 'Unknown Album',
-        'year': '',
-        'genre': '',
-        'comment': '',
-        'track': 0,
-        'duration': 0,
         'albumArt': null,
-        'mimeType': null,
-        'lastModified': fileStats.modified.millisecondsSinceEpoch,
+        'duration': 0,
       };
+    }
+  }
 
-      // Read the entire file for metadata
-      final bytes = await file.readAsBytes();
-      
-      // Detect file format and read metadata
-      switch (extension) {
-        case 'mp3':
-          _readMP3Metadata(bytes, result, nameWithoutExt);
-          break;
-        case 'm4a':
-        case 'aac':
-          _readM4AMetadata(bytes, result);
-          break;
-        case 'flac':
-          _readFLACMetadata(bytes, result);
-          break;
-        case 'wav':
-          _readWAVMetadata(bytes, result);
-          break;
-        case 'ogg':
-          _readOGGMetadata(bytes, result);
-          break;
-      }
+  static String _getFileName(String filePath) {
+    final parts = filePath.split('/');
+    return parts.last;
+  }
 
-      // Cache the result
-      if (_metadataCache.length >= _maxCacheSize) {
-        // Remove oldest entries when cache is full
-        final keysToRemove = _metadataCache.keys.take(_maxCacheSize ~/ 2).toList();
-        for (final key in keysToRemove) {
-          _metadataCache.remove(key);
-        }
-      }
-      _metadataCache[filePath] = result;
-      
-      return result;
-    } catch (e, stackTrace) {
-      debugPrint('Error reading metadata: $e');
-      debugPrint('Stack trace: $stackTrace');
-      return {};
+  static Future<String?> _getAlbumId(String filePath) async {
+    try {
+      final result = await const MethodChannel('com.beats_drive/media_store')
+          .invokeMethod('getAlbumId', {'filePath': filePath});
+      return result as String?;
+    } catch (e) {
+      print('Error getting album ID: $e');
+      return null;
     }
   }
 

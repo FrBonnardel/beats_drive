@@ -2,8 +2,64 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/music_provider.dart';
 import '../providers/audio_provider.dart';
-import '../services/metadata_service.dart';
 import 'dart:math';
+
+class MusicItemTile extends StatelessWidget {
+  final Map<String, dynamic> file;
+  final VoidCallback onTap;
+
+  const MusicItemTile({
+    Key? key,
+    required this.file,
+    required this.onTap,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      key: ValueKey(file['_id']),
+      leading: ClipRRect(
+        borderRadius: BorderRadius.circular(4),
+        child: Container(
+          width: 56,
+          height: 56,
+          color: Colors.grey[800],
+          child: file['albumArt'] != null
+              ? Image.memory(
+                  file['albumArt'],
+                  fit: BoxFit.cover,
+                  cacheWidth: 112, // 2x for high DPI screens
+                  cacheHeight: 112,
+                  errorBuilder: (context, error, stackTrace) {
+                    debugPrint('Error loading album art: $error');
+                    return const Icon(Icons.music_note, color: Colors.white);
+                  },
+                )
+              : const Icon(Icons.music_note, color: Colors.white),
+        ),
+      ),
+      title: Text(
+        file['title'] ?? file['data'].toString().split('/').last,
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w500,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: Text(
+        file['artist'] ?? 'Unknown Artist',
+        style: TextStyle(
+          color: Colors.grey[400],
+          fontSize: 14,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      onTap: onTap,
+    );
+  }
+}
 
 class LibraryScreen extends StatefulWidget {
   const LibraryScreen({Key? key}) : super(key: key);
@@ -14,18 +70,37 @@ class LibraryScreen extends StatefulWidget {
 
 class _LibraryScreenState extends State<LibraryScreen> {
   final TextEditingController _searchController = TextEditingController();
-  List<String> _filteredFiles = [];
-  Map<String, Map<String, dynamic>> _metadataCache = {};
-  static const int _pageSize = 20;
-  int _currentPage = 0;
-  bool _isLoadingMore = false;
+  List<Map<String, dynamic>> _filteredFiles = [];
   final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
-    _scrollController.addListener(_onScroll);
-    _initializeFilteredFiles();
+    _initializeLibrary();
+  }
+
+  Future<void> _initializeLibrary() async {
+    final musicProvider = Provider.of<MusicProvider>(context, listen: false);
+    
+    // If no music files, request permission and scan
+    if (musicProvider.musicFiles.isEmpty) {
+      await musicProvider.requestPermissionAndScan();
+    }
+    
+    // Initialize filtered files
+    setState(() {
+      _filteredFiles = musicProvider.musicFiles;
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Update filtered files when music provider changes
+    final musicProvider = Provider.of<MusicProvider>(context);
+    setState(() {
+      _filteredFiles = musicProvider.musicFiles;
+    });
   }
 
   @override
@@ -35,75 +110,26 @@ class _LibraryScreenState extends State<LibraryScreen> {
     super.dispose();
   }
 
-  void _initializeFilteredFiles() {
-    final musicProvider = Provider.of<MusicProvider>(context, listen: false);
-    setState(() {
-      _filteredFiles = musicProvider.musicFiles;
-      _currentPage = 0;
-    });
-  }
-
-  Future<void> _loadMetadataForPage() async {
-    if (_isLoadingMore) return;
-    
-    setState(() {
-      _isLoadingMore = true;
-    });
-
-    final startIndex = _currentPage * _pageSize;
-    final endIndex = min(startIndex + _pageSize, _filteredFiles.length);
-    
-    for (var i = startIndex; i < endIndex; i++) {
-      final filePath = _filteredFiles[i];
-      if (!_metadataCache.containsKey(filePath)) {
-        final metadata = await MetadataService.getMetadata(filePath);
-        if (mounted) {
-          setState(() {
-            _metadataCache[filePath] = metadata;
-          });
-        }
-      }
-    }
-
-    if (mounted) {
-      setState(() {
-        _currentPage++;
-        _isLoadingMore = false;
-      });
-    }
-  }
-
-  void _onScroll() {
-    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent * 0.8) {
-      _loadMetadataForPage();
-    }
-  }
-
   void _filterFiles(String query) {
     final musicProvider = Provider.of<MusicProvider>(context, listen: false);
     if (query.isEmpty) {
       setState(() {
         _filteredFiles = musicProvider.musicFiles;
-        _currentPage = 0;
-        _metadataCache.clear();
       });
-      _loadMetadataForPage();
     } else {
       setState(() {
-        _filteredFiles = musicProvider.musicFiles.where((filePath) {
-          final metadata = _metadataCache[filePath] ?? {};
-          final title = metadata['title'] as String? ?? filePath.split('/').last;
-          final artist = metadata['artist'] as String? ?? '';
-          final album = metadata['album'] as String? ?? '';
+        _filteredFiles = musicProvider.musicFiles.where((file) {
+          final fileName = file['data'].toString().split('/').last.toLowerCase();
+          final title = file['title']?.toString().toLowerCase() ?? fileName;
+          final artist = file['artist']?.toString().toLowerCase() ?? '';
+          final album = file['album']?.toString().toLowerCase() ?? '';
           
-          return title.toLowerCase().contains(query.toLowerCase()) ||
-                 artist.toLowerCase().contains(query.toLowerCase()) ||
-                 album.toLowerCase().contains(query.toLowerCase());
+          final searchQuery = query.toLowerCase();
+          return title.contains(searchQuery) ||
+                 artist.contains(searchQuery) ||
+                 album.contains(searchQuery);
         }).toList();
-        _currentPage = 0;
-        _metadataCache.clear();
       });
-      _loadMetadataForPage();
     }
   }
 
@@ -138,67 +164,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final random = Random();
     final randomIndex = random.nextInt(musicProvider.musicFiles.length);
     final audioProvider = Provider.of<AudioProvider>(context, listen: false);
-    audioProvider.updatePlaylist(musicProvider.musicFiles);
+    audioProvider.updatePlaylist(musicProvider.musicFiles.map((file) => file['data'] as String).toList());
     audioProvider.selectSong(randomIndex);
-  }
-
-  Widget _buildMusicItem(Map<String, dynamic> metadata) {
-    return ListTile(
-      leading: ClipRRect(
-        borderRadius: BorderRadius.circular(4),
-        child: metadata['albumArt'] != null
-            ? Image.memory(
-                metadata['albumArt'],
-                width: 56,
-                height: 56,
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) {
-                  return Container(
-                    width: 56,
-                    height: 56,
-                    color: Colors.grey[800],
-                    child: Icon(Icons.music_note, color: Colors.white),
-                  );
-                },
-              )
-            : Container(
-                width: 56,
-                height: 56,
-                color: Colors.grey[800],
-                child: Icon(Icons.music_note, color: Colors.white),
-              ),
-      ),
-      title: Text(
-        metadata['title'] ?? 'Unknown Title',
-        style: TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.w500,
-        ),
-      ),
-      subtitle: Text(
-        metadata['artist'] ?? 'Unknown Artist',
-        style: TextStyle(
-          color: Colors.grey[400],
-          fontSize: 14,
-        ),
-      ),
-      onTap: () {
-        // Handle music item tap
-      },
-    );
-  }
-
-  Widget _buildPlaceholderThumbnail() {
-    return Container(
-      width: 56,
-      height: 56,
-      color: Colors.grey[800],
-      child: Icon(
-        Icons.music_note,
-        color: Colors.white.withOpacity(0.5),
-        size: 24,
-      ),
-    );
   }
 
   @override
@@ -226,7 +193,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        '${musicProvider.processedFiles}/${musicProvider.totalFiles}',
+                        musicProvider.currentStatus,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: Theme.of(context).colorScheme.onPrimary,
                         ),
@@ -252,15 +219,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 children: [
                   Text(
                     musicProvider.error,
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: Colors.red,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.error,
                     ),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: _showRescanConfirmation,
-                    child: const Text('Retry'),
+                  FilledButton.icon(
+                    onPressed: () => musicProvider.scanMusicFiles(forceRescan: true),
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Retry'),
                   ),
                 ],
               ),
@@ -272,16 +240,25 @@ class _LibraryScreenState extends State<LibraryScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Text('No music files found'),
-                  if (musicProvider.isScanning) ...[
-                    const SizedBox(height: 16),
-                    const CircularProgressIndicator(),
-                    const SizedBox(height: 8),
-                    Text(
-                      musicProvider.currentStatus,
-                      style: Theme.of(context).textTheme.bodyMedium,
+                  Icon(
+                    Icons.music_off,
+                    size: 64,
+                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'No music found',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
                     ),
-                  ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Add some music to your device',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                    ),
+                  ),
                 ],
               ),
             );
@@ -291,94 +268,36 @@ class _LibraryScreenState extends State<LibraryScreen> {
             children: [
               Padding(
                 padding: const EdgeInsets.all(16.0),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _searchController,
-                        decoration: InputDecoration(
-                          hintText: 'Search music...',
-                          prefixIcon: const Icon(Icons.search),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        onChanged: _filterFiles,
-                      ),
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: 'Search music...',
+                    prefixIcon: const Icon(Icons.search),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                    const SizedBox(width: 8),
-                    FilledButton.icon(
-                      onPressed: _playRandom,
-                      icon: const Icon(Icons.shuffle),
-                      label: const Text('Random'),
-                    ),
-                  ],
+                    filled: true,
+                    fillColor: Theme.of(context).colorScheme.surfaceVariant,
+                  ),
+                  onChanged: _filterFiles,
                 ),
               ),
               Expanded(
                 child: ListView.builder(
                   controller: _scrollController,
-                  itemCount: _filteredFiles.length + (_isLoadingMore ? 1 : 0),
-                  cacheExtent: 1000,
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  itemCount: _filteredFiles.length,
+                  cacheExtent: 100, // Cache more items for smoother scrolling
                   itemBuilder: (context, index) {
-                    if (index == _filteredFiles.length) {
-                      return const Center(
-                        child: Padding(
-                          padding: EdgeInsets.all(16.0),
-                          child: CircularProgressIndicator(),
-                        ),
-                      );
-                    }
-
-                    final filePath = _filteredFiles[index];
-                    final metadata = _metadataCache[filePath] ?? {};
-                    final title = metadata['title'] as String? ?? filePath.split('/').last;
-                    final artist = metadata['artist'] as String? ?? 'Unknown Artist';
-                    final album = metadata['album'] as String? ?? '';
-                    final albumArt = metadata['albumArt'];
-
-                    return Card(
-                      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                      child: ListTile(
-                        leading: ClipRRect(
-                          borderRadius: BorderRadius.circular(4),
-                          child: albumArt != null
-                              ? Image.memory(
-                                  albumArt,
-                                  width: 56,
-                                  height: 56,
-                                  fit: BoxFit.cover,
-                                  gaplessPlayback: true,
-                                  errorBuilder: (context, error, stackTrace) {
-                                    debugPrint('Error loading album art thumbnail: $error');
-                                    debugPrint('Stack trace: $stackTrace');
-                                    return _buildPlaceholderThumbnail();
-                                  },
-                                )
-                              : _buildPlaceholderThumbnail(),
-                        ),
-                        title: Text(
-                          title,
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        subtitle: Text(
-                          artist,
-                          style: TextStyle(
-                            color: Colors.grey[400],
-                            fontSize: 14,
-                          ),
-                        ),
-                        onTap: () {
-                          final audioProvider = Provider.of<AudioProvider>(context, listen: false);
-                          if (audioProvider.playlist != _filteredFiles) {
-                            audioProvider.updatePlaylist(_filteredFiles);
-                          }
-                          audioProvider.selectSong(index);
-                        },
-                      ),
+                    final file = _filteredFiles[index];
+                    return MusicItemTile(
+                      key: ValueKey(file['_id']),
+                      file: file,
+                      onTap: () {
+                        final audioProvider = Provider.of<AudioProvider>(context, listen: false);
+                        audioProvider.updatePlaylist(_filteredFiles.map((f) => f['data'] as String).toList());
+                        audioProvider.selectSong(index);
+                      },
                     );
                   },
                 ),
@@ -386,6 +305,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
             ],
           );
         },
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _playRandom,
+        child: const Icon(Icons.shuffle),
       ),
     );
   }

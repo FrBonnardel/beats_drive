@@ -14,10 +14,15 @@ class _LoadingScreenState extends State<LoadingScreen> {
   @override
   void initState() {
     super.initState();
-    _startScanning();
+    // Use post-frame callback to ensure we're not in the middle of a build
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _startScanning();
+    });
   }
 
   Future<void> _startScanning() async {
+    if (!mounted) return;
+    
     final musicProvider = Provider.of<MusicProvider>(context, listen: false);
     await musicProvider.requestPermissionAndScan(forceRescan: false);
   }
@@ -49,7 +54,7 @@ class _LoadingScreenState extends State<LoadingScreen> {
           // Navigate when either:
           // 1. Scan is complete and successful
           // 2. Using cached files (loaded from cache)
-          if ((musicProvider.isComplete && !musicProvider.isScanning && musicProvider.currentStatus == 'All files processed successfully') ||
+          if ((musicProvider.isComplete && !musicProvider.isScanning && musicProvider.currentStatus == 'Ready') ||
               (musicProvider.isComplete && !musicProvider.isScanning && musicProvider.currentStatus.startsWith('Loaded'))) {
             _navigateToHome();
           }
@@ -86,25 +91,6 @@ class _LoadingScreenState extends State<LoadingScreen> {
                           ),
                           textAlign: TextAlign.center,
                         ),
-                        if (musicProvider.totalFiles > 0) ...[
-                          const SizedBox(height: 10),
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(4),
-                            child: SizedBox(
-                              width: 200,
-                              height: 8,
-                              child: LinearProgressIndicator(
-                                value: musicProvider.totalFiles > 0
-                                    ? musicProvider.processedFiles / musicProvider.totalFiles
-                                    : null,
-                                backgroundColor: isDark ? Colors.grey[800] : Colors.grey[200],
-                                valueColor: AlwaysStoppedAnimation<Color>(
-                                  isDark ? Colors.white : theme.primaryColor,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
                       ],
                       if (musicProvider.error.isNotEmpty) ...[
                         const SizedBox(height: 20),

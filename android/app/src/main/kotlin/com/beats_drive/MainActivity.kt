@@ -17,6 +17,10 @@ class MainActivity: FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         FlutterEngineCache.getInstance().put("my_engine_id", flutterEngine)
+        
+        // Register MediaStorePlugin
+        flutterEngine.plugins.add(MediaStorePlugin())
+        
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "showNotification" -> {

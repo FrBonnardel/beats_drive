@@ -5,6 +5,9 @@ import 'dart:io';
 import 'package:beats_drive/services/metadata_service.dart';
 import 'package:flutter/material.dart';
 import '../services/media_notification_service.dart';
+import '../services/playback_state_service.dart';
+import '../services/app_state_service.dart';
+import '../services/playlist_generator_service.dart';
 
 class AudioProvider with ChangeNotifier {
   final AudioPlayer _audioPlayer = AudioPlayer();
@@ -21,8 +24,61 @@ class AudioProvider with ChangeNotifier {
   String _currentSong = '';
   String _currentArtist = '';
 
+  Stream<int?> get currentIndexStream => _audioPlayer.currentIndexStream;
+
   AudioProvider() {
     _setupAudioPlayer();
+    _restoreState();
+  }
+
+  Future<void> _restoreState() async {
+    final state = await AppStateService.getAppState();
+    
+    // Restore playlist
+    if (state['playlist'] != null && state['playlist'].isNotEmpty) {
+      _playlist = List<String>.from(state['playlist']);
+      await _audioPlayer.setAudioSource(
+        ConcatenatingAudioSource(
+          children: _playlist.map((file) => AudioSource.file(file)).toList(),
+        ),
+      );
+    }
+
+    // Restore playback state
+    if (state['currentSong'] != null && _playlist.isNotEmpty) {
+      final lastPlayedIndex = _playlist.indexWhere(
+        (file) => file.split('/').last == state['currentSong'],
+      );
+
+      if (lastPlayedIndex != -1) {
+        _currentIndex = lastPlayedIndex;
+        await _audioPlayer.seek(state['position'], index: lastPlayedIndex);
+        // Only restore playing state if it was playing before
+        if (state['isPlaying'] == true) {
+          await _audioPlayer.play();
+        }
+      }
+    }
+
+    // Restore shuffle and repeat settings
+    _isShuffleEnabled = state['isShuffleEnabled'] ?? false;
+    _isRepeatEnabled = state['isRepeatEnabled'] ?? false;
+
+    notifyListeners();
+  }
+
+  void _saveState() {
+    if (_currentSong.isNotEmpty) {
+      AppStateService.saveAppState(
+        lastScreen: 'player',
+        playlist: _playlist,
+        currentSong: _currentSong,
+        position: _position,
+        isPlaying: _isPlaying,
+        isShuffleEnabled: _isShuffleEnabled,
+        isRepeatEnabled: _isRepeatEnabled,
+      );
+    }
   }
 
   void _setupAudioPlayer() {
@@ -31,6 +87,7 @@ class AudioProvider with ChangeNotifier {
       if (state.processingState == ProcessingState.completed) {
         _handleSongCompletion();
       }
+      _saveState();
       notifyListeners();
     });
 
@@ -42,6 +99,7 @@ class AudioProvider with ChangeNotifier {
     _audioPlayer.positionStream.listen((position) {
       _position = position;
       _updateMediaNotification();
+      _saveState();
       notifyListeners();
     });
 
@@ -53,6 +111,7 @@ class AudioProvider with ChangeNotifier {
         _currentMetadata = await MetadataService.getMetadata(_playlist[index]);
         _currentArtist = _currentMetadata?['artist'] ?? 'Unknown Artist';
         _updateMediaNotification();
+        _saveState();
       }
       notifyListeners();
     });
@@ -88,6 +147,8 @@ class AudioProvider with ChangeNotifier {
         _currentArtist = _currentMetadata?['artist'] ?? 'Unknown Artist';
         _currentSong = files[0].split('/').last;
       }
+      // Restore playback state after updating playlist
+      await restorePlaybackState();
       notifyListeners();
     }
   }
@@ -137,17 +198,41 @@ class AudioProvider with ChangeNotifier {
     }
   }
 
-  void _handleSongCompletion() {
+  void _handleSongCompletion() async {
     if (_isRepeatEnabled) {
       _audioPlayer.seek(Duration.zero);
       _audioPlayer.play();
-    } else if (_currentIndex < _playlist.length - 1) {
-      selectSong(_getNextIndex());
+    } else {
+      // Mark current song as played
+      if (_currentIndex >= 0 && _currentIndex < _playlist.length) {
+        await PlaylistGeneratorService.markSongAsPlayed(_playlist[_currentIndex]);
+      }
+
+      // Check if we have unplayed songs
+      final hasUnplayed = await PlaylistGeneratorService.hasUnplayedSongs();
+      if (hasUnplayed) {
+        // Get remaining songs and find the next unplayed song
+        final remainingSongs = await PlaylistGeneratorService.getRemainingSongs();
+        if (remainingSongs.isNotEmpty) {
+          final nextSong = remainingSongs.first;
+          final nextIndex = _playlist.indexOf(nextSong);
+          if (nextIndex != -1) {
+            await selectSong(nextIndex);
+          }
+        }
+      } else {
+        // All songs have been played, generate a new playlist for the next day
+        await generateDailyPlaylist();
+        if (_playlist.isNotEmpty) {
+          await selectSong(0);
+        }
+      }
     }
   }
 
   @override
   void dispose() {
+    _saveState(); // Save state before disposing
     _audioPlayer.dispose();
     MediaNotificationService.hideNotification();
     super.dispose();
@@ -249,5 +334,30 @@ class AudioProvider with ChangeNotifier {
       return _shuffleOrder[0];
     }
     return _currentIndex + 1;
+  }
+
+  Future<void> restorePlaybackState() async {
+    final state = await PlaybackStateService.getPlaybackState();
+    if (state['currentSong'] != null && _playlist.isNotEmpty) {
+      // Find the index of the last played song
+      final lastPlayedIndex = _playlist.indexWhere(
+        (file) => file.split('/').last == state['currentSong'],
+      );
+
+      if (lastPlayedIndex != -1) {
+        _currentIndex = lastPlayedIndex;
+        await _audioPlayer.seek(state['position'], index: lastPlayedIndex);
+        if (state['isPlaying']) {
+          await _audioPlayer.play();
+        }
+      }
+    }
+  }
+
+  Future<void> generateDailyPlaylist() async {
+    if (_playlist.isEmpty) return;
+    
+    final dailyPlaylist = await PlaylistGeneratorService.generateDailyPlaylist(_playlist);
+    await updatePlaylist(dailyPlaylist);
   }
 } 
