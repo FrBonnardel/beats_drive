@@ -72,11 +72,11 @@ class Song {
 
   factory Song.fromMap(Map<String, dynamic> map) {
     return Song(
-      id: map['_id'] as String? ?? '',
+      id: (map['_id']?.toString()) ?? '',
       title: map['title'] as String? ?? 'Unknown Title',
       artist: map['artist'] as String? ?? 'Unknown Artist',
       album: map['album'] as String? ?? 'Unknown Album',
-      albumId: map['album_id'] as String? ?? '',
+      albumId: (map['album_id']?.toString()) ?? '',
       duration: map['duration'] as int? ?? 0,
       uri: map['uri'] as String? ?? '',
       trackNumber: map['track'] as int? ?? 0,

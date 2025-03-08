@@ -8,6 +8,7 @@ import 'dart:ui';
 import 'package:flutter/services.dart';
 import '../providers/audio_provider.dart';
 import 'dart:io';
+import 'dart:math';
 
 enum MusicScanStatus {
   initial,
@@ -251,9 +252,9 @@ class MusicProvider extends ChangeNotifier {
         id: entry.key,
         name: firstSong.album,
         artist: firstSong.artist,
-        artwork: null, // We'll load this later when needed
         songs: songs,
         year: firstSong.year,
+        albumArtUri: firstSong.albumArtUri,
       );
     }).toList();
 
@@ -380,24 +381,39 @@ class MusicProvider extends ChangeNotifier {
   }
 
   Future<void> playSong(Song song) async {
-    if (_audioProvider == null) return;
+    if (_audioProvider == null) {
+      debugPrint('AudioProvider is null, cannot play song');
+      return;
+    }
+
+    debugPrint('Attempting to play song: ${song.title} (URI: ${song.uri})');
 
     // Get all songs in the current view based on sort option
     List<Song> currentSongs = List.from(_songs);
+    debugPrint('Total songs in current view: ${currentSongs.length}');
     _applySorting(currentSongs);
 
     // Get URIs for all songs
     final uris = currentSongs.map((s) => s.uri).toList();
+    debugPrint('First few URIs in playlist:');
+    for (var i = 0; i < min(3, uris.length); i++) {
+      debugPrint('[$i]: ${uris[i]}');
+    }
     
     // Find the index of the selected song
     final selectedIndex = currentSongs.indexWhere((s) => s.uri == song.uri);
+    debugPrint('Selected song index: $selectedIndex');
     
     // Update the playlist with all URIs
+    debugPrint('Updating playlist in AudioProvider...');
     await _audioProvider!.updatePlaylist(uris);
     
     // Play the selected song
     if (selectedIndex >= 0) {
+      debugPrint('Playing song at index $selectedIndex');
       await _audioProvider!.selectSong(selectedIndex);
+    } else {
+      debugPrint('Error: Could not find selected song in playlist');
     }
   }
 

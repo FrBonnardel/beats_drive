@@ -23,7 +23,13 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => AudioProvider()),
+        ChangeNotifierProvider(
+          create: (context) {
+            final provider = AudioProvider();
+            provider.setContext(context);
+            return provider;
+          },
+        ),
         ChangeNotifierProxyProvider<AudioProvider, MusicProvider>(
           create: (context) => MusicProvider(
             audioProvider: Provider.of<AudioProvider>(context, listen: false),

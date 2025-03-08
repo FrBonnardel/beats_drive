@@ -10,6 +10,8 @@ import '../services/app_state_service.dart';
 import '../services/playlist_generator_service.dart';
 import '../models/music_models.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import '../providers/music_provider.dart';
 
 class AudioProvider with ChangeNotifier {
   final AudioPlayer _player = AudioPlayer();
@@ -26,6 +28,11 @@ class AudioProvider with ChangeNotifier {
   String _currentSong = '';
   String _currentArtist = '';
   static const _channel = MethodChannel('com.beats_drive/media_store');
+  BuildContext? _context;
+
+  void setContext(BuildContext context) {
+    _context = context;
+  }
 
   Stream<int?> get currentIndexStream => _player.currentIndexStream;
 
@@ -55,6 +62,8 @@ class AudioProvider with ChangeNotifier {
         notifyListeners();
       }
     });
+
+    _setupAudioPlayer();
   }
 
   Future<void> _restoreState() async {
@@ -144,32 +153,66 @@ class AudioProvider with ChangeNotifier {
   }
 
   void _updateMediaNotification() {
-    if (_currentMetadata != null) {
+    if (_context == null || _currentIndex < 0 || _currentIndex >= _playlist.length) {
+      return;
+    }
+
+    final currentUri = _playlist[_currentIndex];
+    final musicProvider = Provider.of<MusicProvider>(
+      _context!,
+      listen: false,
+    );
+
+    final song = musicProvider.songs.firstWhere(
+      (song) => song.uri == currentUri,
+      orElse: () => Song(
+        id: '',
+        title: currentUri.split('/').last,
+        artist: 'Unknown Artist',
+        album: 'Unknown Album',
+        albumId: '',
+        duration: 0,
+        uri: currentUri,
+        trackNumber: 0,
+        year: 0,
+        dateAdded: 0,
+        albumArtUri: '',
+      ),
+    );
+
+    // Load album art
+    musicProvider.loadAlbumArt(song.id).then((albumArt) {
       MediaNotificationService.showNotification(
-        title: _currentMetadata!['title'] ?? "Unknown Title",
-        author: _currentMetadata!['artist'] ?? "Unknown Artist",
-        image: _currentMetadata!['albumArt'],
+        title: song.title,
+        author: song.artist,
+        image: albumArt,
         play: _isPlaying,
       );
-    }
+    });
   }
 
   Future<void> updatePlaylist(List<String> uris) async {
     if (uris.isEmpty) return;
+
+    debugPrint('Updating playlist with ${uris.length} songs');
+    debugPrint('First URI: ${uris.first}');
 
     _playlist = uris;
     _currentIndex = 0;
     _shuffledIndices = List.generate(uris.length, (index) => index);
 
     try {
+      debugPrint('Creating audio sources...');
       final sources = await Future.wait(
         uris.map((uri) => _getAudioSource(uri))
       );
 
+      debugPrint('Setting audio source with ${sources.length} items...');
       await _player.setAudioSource(
         ConcatenatingAudioSource(children: sources),
         initialIndex: 0,
       );
+      debugPrint('Audio source set successfully');
     } catch (e) {
       debugPrint('Error setting audio source: $e');
     }
@@ -177,18 +220,32 @@ class AudioProvider with ChangeNotifier {
 
   Future<AudioSource> _getAudioSource(String uri) async {
     try {
+      debugPrint('Creating AudioSource for URI: $uri');
+      final parsedUri = Uri.parse(uri);
+      debugPrint('Parsed URI scheme: ${parsedUri.scheme}');
+      debugPrint('Parsed URI path: ${parsedUri.path}');
+      debugPrint('Parsed URI query: ${parsedUri.query}');
       // Create an AudioSource directly from the content URI
-      return AudioSource.uri(Uri.parse(uri), tag: uri);
+      final source = AudioSource.uri(parsedUri, tag: uri);
+      debugPrint('AudioSource created successfully');
+      return source;
     } catch (e) {
       debugPrint('Error getting audio source: $e');
+      debugPrint('Stack trace: ${StackTrace.current}');
       rethrow;
     }
   }
 
   Future<void> selectSong(int index) async {
+    debugPrint('Selecting song at index $index (playlist length: ${_playlist.length})');
     if (index >= 0 && index < _playlist.length) {
+      debugPrint('Seeking to beginning of song at index $index');
       await _player.seek(Duration.zero, index: index);
+      debugPrint('Starting playback');
       await _player.play();
+      debugPrint('Playback started');
+    } else {
+      debugPrint('Invalid index: $index');
     }
   }
 
