@@ -42,6 +42,26 @@ class MediaStorePlugin: FlutterPlugin, MethodCallHandler {
                     }
                 }.start()
             }
+            "getSongMetadata" -> {
+                Thread {
+                    try {
+                        val uri = call.argument<String>("uri")
+                        if (uri == null) {
+                            result.error("INVALID_URI", "URI is required", null)
+                            return@Thread
+                        }
+
+                        val metadata = getSongMetadata(uri)
+                        if (metadata != null) {
+                            result.success(metadata)
+                        } else {
+                            result.error("METADATA_ERROR", "Could not find song metadata", null)
+                        }
+                    } catch (e: Exception) {
+                        result.error("METADATA_ERROR", "Failed to get song metadata: ${e.message}", null)
+                    }
+                }.start()
+            }
             "getMusicFiles" -> {
                 Thread {
                     try {
@@ -143,7 +163,8 @@ class MediaStorePlugin: FlutterPlugin, MethodCallHandler {
             MediaStore.Audio.Media.DURATION,
             MediaStore.Audio.Media.TRACK,
             MediaStore.Audio.Media.YEAR,
-            MediaStore.Audio.Media.DATE_ADDED
+            MediaStore.Audio.Media.DATE_ADDED,
+            MediaStore.Audio.Media.DATA
         )
 
         val selection = StringBuilder().apply {
@@ -158,47 +179,67 @@ class MediaStorePlugin: FlutterPlugin, MethodCallHandler {
 
         val sortOrder = "${MediaStore.Audio.Media.TITLE} ASC"
 
-        return contentResolver.query(
-            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
-            projection,
-            selection,
-            null,
-            sortOrder
-        )?.use { cursor ->
-            while (cursor.moveToNext()) {
-                try {
-                    val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID))
-                    val albumId = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID))
-                    val contentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
-                    val albumArtUri = ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), albumId)
+        try {
+            val cursor = contentResolver.query(
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                projection,
+                selection,
+                null,
+                sortOrder
+            )
 
-                    // Verify the file exists and is accessible
+            if (cursor == null) {
+                android.util.Log.e("MediaStorePlugin", "Failed to query MediaStore: cursor is null")
+                return emptyList()
+            }
+
+            cursor.use {
+                android.util.Log.d("MediaStorePlugin", "Found ${cursor.count} music files")
+                while (cursor.moveToNext()) {
                     try {
-                        contentResolver.openFileDescriptor(contentUri, "r")?.close()
-                    } catch (e: Exception) {
-                        continue // Skip this file if it's not accessible
-                    }
+                        val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID))
+                        val albumId = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID))
+                        val contentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
+                        val albumArtUri = ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), albumId)
+                        val data = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA))
 
-                    musicFiles.add(mapOf(
-                        "_id" to id.toString(),
-                        "title" to cursor.getStringOrDefault(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)),
-                        "artist" to cursor.getStringOrDefault(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)),
-                        "album" to cursor.getStringOrDefault(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)),
-                        "album_id" to albumId.toString(),
-                        "duration" to cursor.getIntOrDefault(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)),
-                        "uri" to contentUri.toString(),
-                        "track" to cursor.getIntOrDefault(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TRACK)),
-                        "year" to cursor.getIntOrDefault(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.YEAR)),
-                        "date_added" to cursor.getLongOrDefault(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)),
-                        "album_art_uri" to albumArtUri.toString()
-                    ))
-                } catch (e: Exception) {
-                    // Skip this entry if there's an error
-                    continue
+                        // Verify the file exists and is accessible
+                        try {
+                            contentResolver.openFileDescriptor(contentUri, "r")?.close()
+                        } catch (e: Exception) {
+                            android.util.Log.w("MediaStorePlugin", "File not accessible: ${contentUri}")
+                            continue // Skip this file if it's not accessible
+                        }
+
+                        val title = cursor.getStringOrDefault(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE))
+                        android.util.Log.d("MediaStorePlugin", "Processing song: $title")
+
+                        musicFiles.add(mapOf(
+                            "_id" to id.toString(),
+                            "title" to title,
+                            "artist" to cursor.getStringOrDefault(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)),
+                            "album" to cursor.getStringOrDefault(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)),
+                            "album_id" to albumId.toString(),
+                            "duration" to cursor.getIntOrDefault(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)),
+                            "uri" to contentUri.toString(),
+                            "track" to cursor.getIntOrDefault(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TRACK)),
+                            "year" to cursor.getIntOrDefault(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.YEAR)),
+                            "date_added" to cursor.getLongOrDefault(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)),
+                            "album_art_uri" to albumArtUri.toString(),
+                            "data" to data
+                        ))
+                    } catch (e: Exception) {
+                        android.util.Log.e("MediaStorePlugin", "Error processing music file: ${e.message}")
+                        continue
+                    }
                 }
             }
-            musicFiles
-        } ?: emptyList()
+            android.util.Log.d("MediaStorePlugin", "Successfully processed ${musicFiles.size} music files")
+            return musicFiles
+        } catch (e: Exception) {
+            android.util.Log.e("MediaStorePlugin", "Error querying music files: ${e.message}")
+            return emptyList()
+        }
     }
 
     private fun getAlbumId(songId: String): String? {
@@ -219,7 +260,7 @@ class MediaStorePlugin: FlutterPlugin, MethodCallHandler {
         return ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), albumId.toLong())
     }
 
-    private fun Cursor.getStringOrDefault(columnIndex: Int, default: String = ""): String {
+    private fun Cursor.getStringOrDefault(columnIndex: Int, default: String = "Unknown"): String {
         return try {
             getString(columnIndex) ?: default
         } catch (e: Exception) {
@@ -240,6 +281,57 @@ class MediaStorePlugin: FlutterPlugin, MethodCallHandler {
             getLong(columnIndex)
         } catch (e: Exception) {
             default
+        }
+    }
+
+    private fun getSongMetadata(uri: String): Map<String, Any?>? {
+        val contentUri = Uri.parse(uri)
+        val projection = arrayOf(
+            MediaStore.Audio.Media._ID,
+            MediaStore.Audio.Media.TITLE,
+            MediaStore.Audio.Media.ARTIST,
+            MediaStore.Audio.Media.ALBUM,
+            MediaStore.Audio.Media.ALBUM_ID,
+            MediaStore.Audio.Media.DURATION,
+            MediaStore.Audio.Media.TRACK,
+            MediaStore.Audio.Media.YEAR,
+            MediaStore.Audio.Media.DATE_ADDED,
+            MediaStore.Audio.Media.DATA
+        )
+
+        return try {
+            contentResolver.query(
+                contentUri,
+                projection,
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID))
+                    val albumId = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID))
+                    val albumArtUri = ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), albumId)
+                    val data = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA))
+
+                    mapOf(
+                        "_id" to id.toString(),
+                        "title" to cursor.getStringOrDefault(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)),
+                        "artist" to cursor.getStringOrDefault(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)),
+                        "album" to cursor.getStringOrDefault(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)),
+                        "album_id" to albumId.toString(),
+                        "duration" to cursor.getIntOrDefault(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)),
+                        "uri" to uri,
+                        "track" to cursor.getIntOrDefault(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TRACK)),
+                        "year" to cursor.getIntOrDefault(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.YEAR)),
+                        "date_added" to cursor.getLongOrDefault(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)),
+                        "album_art_uri" to albumArtUri.toString(),
+                        "data" to data
+                    )
+                } else null
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("MediaStorePlugin", "Error getting song metadata: ${e.message}")
+            null
         }
     }
 

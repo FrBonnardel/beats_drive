@@ -1,4 +1,7 @@
 import 'dart:typed_data';
+import 'package:hive/hive.dart';
+
+part 'music_models.g.dart';
 
 class Album {
   final String id;
@@ -43,17 +46,29 @@ class Artist {
   String get displayName => name.isEmpty ? 'Unknown Artist' : name;
 }
 
+@HiveType(typeId: 0)
 class Song {
+  @HiveField(0)
   final String id;
+  @HiveField(1)
   final String title;
+  @HiveField(2)
   final String artist;
+  @HiveField(3)
   final String album;
+  @HiveField(4)
   final String albumId;
+  @HiveField(5)
   final int duration;
+  @HiveField(6)
   final String uri;
+  @HiveField(7)
   final int trackNumber;
+  @HiveField(8)
   final int year;
+  @HiveField(9)
   final int dateAdded;
+  @HiveField(10)
   final String albumArtUri;
 
   Song({
@@ -69,6 +84,22 @@ class Song {
     required this.dateAdded,
     required this.albumArtUri,
   });
+
+  Map<String, dynamic> toMap() {
+    return {
+      '_id': id,
+      'title': title,
+      'artist': artist,
+      'album': album,
+      'album_id': albumId,
+      'duration': duration,
+      'uri': uri,
+      'track': trackNumber,
+      'year': year,
+      'date_added': dateAdded,
+      'album_art_uri': albumArtUri,
+    };
+  }
 
   factory Song.fromMap(Map<String, dynamic> map) {
     return Song(

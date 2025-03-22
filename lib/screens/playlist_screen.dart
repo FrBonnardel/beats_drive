@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import '../providers/audio_provider.dart';
 import '../providers/music_provider.dart';
 import '../models/music_models.dart';
+import '../widgets/song_list_item.dart';
 
 class PlaylistScreen extends StatefulWidget {
   const PlaylistScreen({super.key});
@@ -13,53 +14,74 @@ class PlaylistScreen extends StatefulWidget {
 }
 
 class _PlaylistScreenState extends State<PlaylistScreen> {
+  final ScrollController _scrollController = ScrollController();
   Map<String, Song> _songCache = {};
-  Map<String, Uint8List?> _artworkCache = {};
+  bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
-    _loadSongsForPlaylist();
+    _loadInitialSongs();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _scrollToCurrentSong();
+      }
+    });
   }
 
-  Future<void> _loadSongsForPlaylist() async {
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _scrollToCurrentSong() {
+    if (!_scrollController.hasClients) return;
+    
     final audioProvider = Provider.of<AudioProvider>(context, listen: false);
-    final musicProvider = Provider.of<MusicProvider>(context, listen: false);
+    final currentIndex = audioProvider.currentIndex;
+    
+    if (currentIndex != null && currentIndex >= 0) {
+      final itemHeight = 72.0; // Estimated height of each list item
+      final offset = currentIndex * itemHeight;
+      _scrollController.animateTo(
+        offset,
+        duration: const Duration(milliseconds: 500),
+        curve: Curves.easeInOut,
+      );
+    }
+  }
 
-    for (final uri in audioProvider.playlist) {
-      if (!_songCache.containsKey(uri)) {
-        final song = musicProvider.songs.firstWhere(
-          (song) => song.uri == uri,
-          orElse: () => Song(
-            id: '',
-            title: uri.split('/').last,
-            artist: 'Unknown Artist',
-            album: 'Unknown Album',
-            albumId: '',
-            duration: 0,
-            uri: uri,
-            trackNumber: 0,
-            year: 0,
-            dateAdded: 0,
-            albumArtUri: '',
-          ),
-        );
+  Future<void> _loadInitialSongs() async {
+    if (!mounted) return;
 
-        if (mounted) {
-          setState(() {
-            _songCache[uri] = song;
-          });
+    setState(() {
+      _isLoading = true;
+    });
 
-          // Load album art
-          if (song.id.isNotEmpty) {
-            final albumArt = await musicProvider.loadAlbumArt(song.id);
+    try {
+      final audioProvider = Provider.of<AudioProvider>(context, listen: false);
+      final musicProvider = Provider.of<MusicProvider>(context, listen: false);
+
+      for (final uri in audioProvider.playlist) {
+        if (!_songCache.containsKey(uri)) {
+          try {
+            final song = await musicProvider.getSongByUri(uri);
             if (mounted) {
               setState(() {
-                _artworkCache[uri] = albumArt;
+                _songCache[uri] = song;
               });
             }
+          } catch (e) {
+            debugPrint('Error loading song for URI $uri: $e');
           }
         }
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
       }
     }
   }
@@ -88,124 +110,63 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
               ),
             ],
           ),
-          body: audioProvider.playlist.isEmpty
-              ? const Center(
-                  child: Text(
-                    'No songs in playlist',
-                    style: TextStyle(fontSize: 16, color: Colors.grey),
-                  ),
-                )
-              : ReorderableListView.builder(
-                  padding: const EdgeInsets.all(8),
+          body: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : ListView.builder(
+                  controller: _scrollController,
                   itemCount: audioProvider.playlist.length,
-                  onReorder: (oldIndex, newIndex) {
-                    if (oldIndex < newIndex) {
-                      newIndex -= 1;
-                    }
-                    final item = audioProvider.playlist.removeAt(oldIndex);
-                    audioProvider.playlist.insert(newIndex, item);
-                    if (audioProvider.currentIndex == oldIndex) {
-                      audioProvider.currentIndex = newIndex;
-                    } else if (audioProvider.currentIndex > oldIndex &&
-                        audioProvider.currentIndex <= newIndex) {
-                      audioProvider.currentIndex--;
-                    } else if (audioProvider.currentIndex < oldIndex &&
-                        audioProvider.currentIndex >= newIndex) {
-                      audioProvider.currentIndex++;
-                    }
-                  },
                   itemBuilder: (context, index) {
                     final uri = audioProvider.playlist[index];
-                    final song = musicProvider.songs.firstWhere(
-                      (song) => song.uri == uri,
-                      orElse: () => Song(
-                        id: '',
-                        title: uri.split('/').last,
-                        artist: 'Unknown Artist',
-                        album: 'Unknown Album',
-                        albumId: '',
-                        duration: 0,
-                        uri: uri,
-                        trackNumber: 0,
-                        year: 0,
-                        dateAdded: 0,
-                        albumArtUri: '',
-                      ),
-                    );
-                    final isPlaying = index == audioProvider.currentIndex;
+                    final song = _songCache[uri];
+                    
+                    if (song == null) {
+                      return ListTile(
+                        title: Text(uri.split('/').last),
+                        subtitle: const Text('Loading...'),
+                      );
+                    }
 
-                    return ListTile(
-                      key: Key('playlist_item_$index'),
-                      leading: FutureBuilder<Uint8List?>(
-                        future: song.id.isNotEmpty ? musicProvider.loadAlbumArt(song.id) : Future.value(null),
-                        builder: (context, snapshot) {
-                          return Container(
-                            width: 40,
-                            height: 40,
-                            decoration: BoxDecoration(
-                              color: Colors.grey[800],
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: snapshot.hasData && snapshot.data != null
-                                ? ClipRRect(
-                                    borderRadius: BorderRadius.circular(4),
-                                    child: Image.memory(
-                                      snapshot.data!,
-                                      fit: BoxFit.cover,
-                                    ),
-                                  )
-                                : const Icon(Icons.music_note, color: Colors.white70),
-                          );
+                    return Container(
+                      color: index == audioProvider.currentIndex
+                          ? Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3)
+                          : null,
+                      child: ListTile(
+                        leading: FutureBuilder<Uint8List?>(
+                          future: musicProvider.loadAlbumArt(song.id),
+                          builder: (context, snapshot) {
+                            return Container(
+                              width: 48,
+                              height: 48,
+                              decoration: BoxDecoration(
+                                color: Colors.grey[800],
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: snapshot.data != null
+                                  ? ClipRRect(
+                                      borderRadius: BorderRadius.circular(4),
+                                      child: Image.memory(
+                                        snapshot.data!,
+                                        fit: BoxFit.cover,
+                                      ),
+                                    )
+                                  : const Icon(Icons.music_note, color: Colors.white70),
+                            );
+                          },
+                        ),
+                        title: Text(
+                          song.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          '${song.artist} • ${song.album}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onTap: () {
+                          audioProvider.selectSong(index);
                         },
                       ),
-                      title: Text(
-                        song.title,
-                        style: TextStyle(
-                          fontWeight: isPlaying ? FontWeight.bold : FontWeight.normal,
-                          color: isPlaying
-                              ? Theme.of(context).colorScheme.primary
-                              : Colors.white,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: Text(
-                        song.artist,
-                        style: TextStyle(
-                          color: Colors.grey[400],
-                          fontSize: 12,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (isPlaying)
-                            Icon(
-                              Icons.volume_up,
-                              size: 16,
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
-                          const SizedBox(width: 8),
-                          Text(
-                            _formatDuration(song.duration),
-                            style: TextStyle(
-                              color: Colors.grey[400],
-                              fontSize: 12,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          ReorderableDragStartListener(
-                            index: index,
-                            child: const Icon(
-                              Icons.drag_handle,
-                              color: Colors.grey,
-                            ),
-                          ),
-                        ],
-                      ),
-                      onTap: () => audioProvider.selectSong(index),
                     );
                   },
                 ),

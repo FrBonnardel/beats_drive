@@ -19,6 +19,9 @@ class MediaStoreService {
     'date_modified',
     'size',
     'mime_type',
+    'album_id',
+    'track',
+    'year',
   ];
 
   // Cache structure
@@ -119,5 +122,40 @@ class MediaStoreService {
     final now = DateTime.now();
     final difference = now.difference(_lastUpdate!);
     return difference.inMinutes < 5;
+  }
+
+  // Get metadata for a specific song by URI
+  static Future<Map<String, dynamic>?> getSongMetadata(String uri) async {
+    try {
+      final result = await platform.invokeMethod('getSongMetadata', {
+        'uri': uri,
+        'columns': _columns,
+      });
+
+      if (result != null) {
+        return Map<String, dynamic>.from(result);
+      }
+      return null;
+    } catch (e) {
+      print('Error getting song metadata: $e');
+      return null;
+    }
+  }
+
+  // Get album art for a specific album ID
+  static Future<Uint8List?> getAlbumArt(String albumId) async {
+    try {
+      final result = await platform.invokeMethod('getAlbumArt', {
+        'albumId': albumId,
+      });
+
+      if (result != null) {
+        return result as Uint8List;
+      }
+      return null;
+    } catch (e) {
+      print('Error getting album art: $e');
+      return null;
+    }
   }
 } 

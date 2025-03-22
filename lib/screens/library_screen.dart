@@ -7,6 +7,7 @@ import '../models/music_models.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'dart:math';
 import '../widgets/mini_player.dart';
+import 'package:beats_drive/widgets/song_list_item.dart';
 
 class MusicItemTile extends StatelessWidget {
   final Map<String, dynamic> file;
@@ -100,16 +101,55 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
   String _searchQuery = '';
   SortOption _currentSort = SortOption.titleAsc;
   final ScrollController _scrollController = ScrollController();
+  static const int _pageSize = 50;
+  int _currentPage = 0;
+  bool _isLoadingMore = false;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _scrollController.addListener(_onScroll);
     Future.microtask(() async {
       final musicProvider = Provider.of<MusicProvider>(context, listen: false);
       if (musicProvider.songs.isEmpty) {
         await musicProvider.requestPermissionAndScan();
       }
+    });
+  }
+
+  void _onScroll() {
+    if (!_isLoadingMore && 
+        _scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 500) {
+      _loadMoreItems();
+    }
+  }
+
+  Future<void> _loadMoreItems() async {
+    if (_isLoadingMore) return;
+
+    final musicProvider = Provider.of<MusicProvider>(context, listen: false);
+    final totalItems = _tabController.index == 0 
+        ? musicProvider.songs.length 
+        : _tabController.index == 1 
+            ? musicProvider.albums.length 
+            : musicProvider.artists.length;
+
+    final currentItems = (_currentPage + 1) * _pageSize;
+    if (currentItems >= totalItems) return;
+    
+    setState(() {
+      _isLoadingMore = true;
+    });
+
+    // Simulate loading delay for smoother UX
+    await Future.delayed(const Duration(milliseconds: 300));
+
+    if (!mounted) return;
+
+    setState(() {
+      _currentPage++;
+      _isLoadingMore = false;
     });
   }
 
@@ -121,6 +161,13 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
     super.dispose();
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Reset pagination when dependencies change (e.g., when switching tabs)
+        _currentPage = 0;
+  }
+
   void _showSortOptions() {
     showModalBottomSheet(
       context: context,
@@ -129,8 +176,8 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
         onSortChanged: (sort) {
           setState(() => _currentSort = sort);
           Provider.of<MusicProvider>(context, listen: false).setSortOption(sort);
-          Navigator.pop(context);
-        },
+              Navigator.pop(context);
+            },
       ),
     );
   }
@@ -173,22 +220,13 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
           ],
         ),
       ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: TabBarView(
-                controller: _tabController,
-                children: [
-                  _buildSongsList(),
-                  _buildAlbumGrid(),
-                  _buildArtistsList(),
-                ],
-              ),
-            ),
-            const MiniPlayer(),
-          ],
-        ),
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          _buildSongsList(),
+          _buildAlbumGrid(),
+          _buildArtistsList(),
+        ],
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: _tabController.index == 3 ? _createPlaylist : _playRandom,
@@ -210,75 +248,28 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
           );
         }
 
+        final itemCount = (_currentPage + 1) * _pageSize;
+        final displayedSongs = songs.take(itemCount).toList();
+
         return ListView.builder(
           controller: _scrollController,
-          itemCount: songs.length,
+          itemCount: displayedSongs.length + (_isLoadingMore ? 1 : 0),
           itemBuilder: (context, index) {
-            final song = songs[index];
-            return ListTile(
-              leading: FutureBuilder<Uint8List?>(
-                future: provider.loadAlbumArt(song.id),
-                builder: (context, snapshot) {
-                  if (snapshot.hasData && snapshot.data != null) {
-                    return ClipRRect(
-                      borderRadius: BorderRadius.circular(4),
-                      child: Image.memory(
-                        snapshot.data!,
-                        width: 50,
-                        height: 50,
-                        fit: BoxFit.cover,
-                      ),
-                    );
-                  }
-                  return Container(
-                    width: 50,
-                    height: 50,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[800],
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: const Icon(Icons.music_note, color: Colors.white70),
-                  );
-                },
-              ),
-              title: Text(
-                song.displayTitle,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w500,
-                  color: Colors.white,
+            if (index == displayedSongs.length) {
+              return const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(16.0),
+                  child: CircularProgressIndicator(),
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(
-                '${song.displayArtist} • ${song.displayAlbum}',
-                style: TextStyle(
-                  color: Colors.grey[400],
-                  fontSize: 12,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              trailing: Text(
-                _formatDuration(song.duration),
-                style: TextStyle(
-                  color: Colors.grey[400],
-                  fontSize: 12,
-                ),
-              ),
-              onTap: () => provider.playSong(song),
-            );
+              );
+            }
+
+            final song = displayedSongs[index];
+            return SongListItem(song: song);
           },
         );
       },
     );
-  }
-
-  String _formatDuration(int milliseconds) {
-    final duration = Duration(milliseconds: milliseconds);
-    final minutes = duration.inMinutes;
-    final seconds = (duration.inSeconds % 60).toString().padLeft(2, '0');
-    return '$minutes:$seconds';
   }
 
   Widget _buildAlbumGrid() {
@@ -294,6 +285,9 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
           );
         }
 
+        final itemCount = (_currentPage + 1) * (_pageSize ~/ 2);
+        final displayedAlbums = albums.take(itemCount).toList();
+
         return GridView.builder(
           controller: _scrollController,
           padding: const EdgeInsets.all(16),
@@ -303,41 +297,28 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
             crossAxisSpacing: 16,
             mainAxisSpacing: 16,
           ),
-          itemCount: albums.length,
+          itemCount: displayedAlbums.length + (_isLoadingMore ? 1 : 0),
           itemBuilder: (context, index) {
-            final album = albums[index];
+            if (index == displayedAlbums.length) {
+              return const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(16.0),
+                  child: CircularProgressIndicator(),
+                ),
+              );
+            }
+
+            final album = displayedAlbums[index];
+            final firstSongId = album.songs.isNotEmpty ? album.songs.first.id : '';
+            
             return InkWell(
-              onTap: () => provider.playAlbum(album),
+              onTap: () => provider.playAlbum(context, album),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   AspectRatio(
                     aspectRatio: 1,
-                    child: FutureBuilder<Uint8List?>(
-                      future: album.songs.isNotEmpty 
-                        ? provider.loadAlbumArt(album.songs.first.id)
-                        : Future.value(null),
-                      builder: (context, snapshot) {
-                        if (snapshot.hasData && snapshot.data != null) {
-                          return ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: Image.memory(
-                              snapshot.data!,
-                              fit: BoxFit.cover,
-                            ),
-                          );
-                        }
-                        return Container(
-                          decoration: BoxDecoration(
-                            color: Colors.grey[800],
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Center(
-                            child: Icon(Icons.album, color: Colors.white70, size: 48),
-                          ),
-                        );
-                      },
-                    ),
+                    child: _buildAlbumArtForAlbum(firstSongId, provider),
                   ),
                   const SizedBox(height: 8),
                   Text(
@@ -364,6 +345,41 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
           },
         );
       },
+    );
+  }
+
+  Widget _buildAlbumArtForAlbum(String songId, MusicProvider provider) {
+    if (songId.isEmpty) return _buildAlbumContainer(null);
+    
+    return FutureBuilder<Uint8List?>(
+      future: provider.loadAlbumArt(songId),
+      builder: (context, snapshot) {
+        return _buildAlbumContainer(snapshot.data);
+      },
+    );
+  }
+
+  Widget _buildAlbumContainer(Uint8List? albumArt) {
+    return Container(
+      width: 50,
+      height: 50,
+      decoration: BoxDecoration(
+        color: Colors.grey[800],
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: albumArt != null
+          ? ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: Image.memory(
+                albumArt,
+                width: 50,
+                height: 50,
+                fit: BoxFit.cover,
+                cacheWidth: 100,
+                cacheHeight: 100,
+              ),
+            )
+          : const Icon(Icons.music_note, color: Colors.white70),
     );
   }
 
@@ -543,18 +559,18 @@ class _ErrorView extends StatelessWidget {
           Text(
             error,
             style: TextStyle(color: Theme.of(context).colorScheme.error),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 16),
-          FilledButton.icon(
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
             onPressed: onRetry,
-            icon: const Icon(Icons.refresh),
-            label: const Text('Retry'),
-          ),
-        ],
-      ),
-    );
-  }
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Retry'),
+                  ),
+                ],
+              ),
+            );
+          }
 }
 
 class _EmptyView extends StatelessWidget {
@@ -562,30 +578,30 @@ class _EmptyView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.music_off,
-            size: 64,
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'No music found',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Add some music to your device',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-            ),
-          ),
-        ],
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.music_off,
+                    size: 64,
+                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'No music found',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Add some music to your device',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                    ),
+                  ),
+                ],
       ),
     );
   }

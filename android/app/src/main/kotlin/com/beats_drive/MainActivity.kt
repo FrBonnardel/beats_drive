@@ -6,35 +6,37 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
+import com.beats_drive.MediaStorePlugin
 
 class MainActivity: FlutterActivity() {
     private val CHANNEL = "com.beats_drive/media_notification"
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-    }
+    private lateinit var methodChannel: MethodChannel
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        FlutterEngineCache.getInstance().put("my_engine_id", flutterEngine)
         
+        // Cache the FlutterEngine for use by the service
+        FlutterEngineCache.getInstance().put("main_engine", flutterEngine)
+
         // Register MediaStorePlugin
         flutterEngine.plugins.add(MediaStorePlugin())
-        
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
+
+        methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
+        methodChannel.setMethodCallHandler { call, result ->
             when (call.method) {
                 "showNotification" -> {
                     val title = call.argument<String>("title") ?: ""
                     val author = call.argument<String>("author") ?: ""
                     val image = call.argument<ByteArray>("image")
                     val play = call.argument<Boolean>("play") ?: true
+
                     val intent = Intent(this, MediaNotificationService::class.java).apply {
                         action = "SHOW_NOTIFICATION"
                         putExtra("title", title)
                         putExtra("author", author)
                         putExtra("image", image)
                         putExtra("play", play)
-                        putExtra("flutterEngineId", "my_engine_id")
+                        putExtra("flutterEngineId", "main_engine")
                     }
                     startService(intent)
                     result.success(null)
@@ -46,35 +48,25 @@ class MainActivity: FlutterActivity() {
                     startService(intent)
                     result.success(null)
                 }
-                else -> {
-                    result.notImplemented()
-                }
+                else -> result.notImplemented()
             }
         }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        handleIntent(intent)
-    }
-
-    private fun handleIntent(intent: Intent) {
         when (intent.action) {
             MediaNotificationService.ACTION_PLAY -> {
-                MethodChannel(flutterEngine?.dartExecutor?.binaryMessenger!!, CHANNEL)
-                    .invokeMethod("onPlay", null)
+                methodChannel.invokeMethod("onPlay", null)
             }
             MediaNotificationService.ACTION_PAUSE -> {
-                MethodChannel(flutterEngine?.dartExecutor?.binaryMessenger!!, CHANNEL)
-                    .invokeMethod("onPause", null)
+                methodChannel.invokeMethod("onPause", null)
             }
             MediaNotificationService.ACTION_NEXT -> {
-                MethodChannel(flutterEngine?.dartExecutor?.binaryMessenger!!, CHANNEL)
-                    .invokeMethod("onNext", null)
+                methodChannel.invokeMethod("onNext", null)
             }
             MediaNotificationService.ACTION_PREVIOUS -> {
-                MethodChannel(flutterEngine?.dartExecutor?.binaryMessenger!!, CHANNEL)
-                    .invokeMethod("onPrevious", null)
+                methodChannel.invokeMethod("onPrevious", null)
             }
         }
     }
