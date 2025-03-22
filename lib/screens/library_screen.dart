@@ -354,32 +354,45 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
     return FutureBuilder<Uint8List?>(
       future: provider.loadAlbumArt(songId),
       builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return _buildAlbumContainer(null, isLoading: true);
+        }
+        if (snapshot.hasError) {
+          debugPrint('Error loading album art: ${snapshot.error}');
+        }
         return _buildAlbumContainer(snapshot.data);
       },
     );
   }
 
-  Widget _buildAlbumContainer(Uint8List? albumArt) {
+  Widget _buildAlbumContainer(Uint8List? albumArt, {bool isLoading = false}) {
     return Container(
-      width: 50,
-      height: 50,
       decoration: BoxDecoration(
         color: Colors.grey[800],
         borderRadius: BorderRadius.circular(4),
       ),
-      child: albumArt != null
-          ? ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: Image.memory(
-                albumArt,
-                width: 50,
-                height: 50,
-                fit: BoxFit.cover,
-                cacheWidth: 100,
-                cacheHeight: 100,
+      child: isLoading
+          ? const Center(
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white70),
               ),
             )
-          : const Icon(Icons.music_note, color: Colors.white70),
+          : albumArt != null
+              ? ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: Image.memory(
+                    albumArt,
+                    fit: BoxFit.cover,
+                    cacheWidth: 200,
+                    cacheHeight: 200,
+                    errorBuilder: (context, error, stackTrace) {
+                      debugPrint('Error displaying album art: $error');
+                      return const _PlaceholderArt();
+                    },
+                  ),
+                )
+              : const _PlaceholderArt(),
     );
   }
 

@@ -278,11 +278,22 @@ class MusicProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      if (!forceRescan && !CacheService.shouldRescan()) {
+      // Try loading from cache first if not forcing rescan
+      if (!forceRescan) {
         _currentStatus = 'Loading cached data...';
         notifyListeners();
-        await _loadCachedData();
-        return;
+        
+        final cachedSongs = CacheService.getCachedSongs();
+        if (cachedSongs.isNotEmpty) {
+          _songs = cachedSongs;
+          _updateCollections();
+          _status = MusicScanStatus.completed;
+          _isComplete = true;
+          _currentStatus = 'Loaded from cache';
+          notifyListeners();
+          debugPrint('Successfully loaded ${_songs.length} songs from cache');
+          return;
+        }
       }
 
       // Subscribe to background service results
@@ -305,6 +316,20 @@ class MusicProvider extends ChangeNotifier {
 
   Future<void> _processMusicFiles(List<Song> songs) async {
     debugPrint('Processing ${songs.length} music files');
+    
+    // Check if the music library has changed
+    final hasChanged = await CacheService.hasMusicLibraryChanged(songs);
+    if (!hasChanged && !CacheService.shouldRescan()) {
+      debugPrint('Music library unchanged, using cached data');
+      _songs = CacheService.getCachedSongs();
+      _updateCollections();
+      _status = MusicScanStatus.completed;
+      _isComplete = true;
+      _currentStatus = 'Loaded from cache';
+      notifyListeners();
+      return;
+    }
+
     _songs = songs;
     _albums.clear();
     _artists.clear();
@@ -516,25 +541,39 @@ class MusicProvider extends ChangeNotifier {
 
     // Check memory cache first
     if (_albumArtCache.containsKey(songId)) {
+      debugPrint('MusicProvider: Found album art in memory cache for song: $songId');
       return _albumArtCache[songId];
     }
 
     // Check disk cache
-    final cachedArt = CacheService.getCachedAlbumArt(songId);
+    final cachedArt = await CacheService.getCachedAlbumArt(songId);
     if (cachedArt != null) {
+      debugPrint('MusicProvider: Found album art in disk cache for song: $songId');
       _albumArtCache[songId] = cachedArt;
       return cachedArt;
     }
 
-    // Load from storage and cache
+    // Load from MediaStore
     try {
       final song = _songs.firstWhereOrNull((s) => s.id == songId);
-      if (song == null) return null;
+      if (song == null) {
+        debugPrint('MusicProvider: Song not found for ID: $songId');
+        return null;
+      }
 
-      // Schedule background metadata update
-      await BackgroundService.scheduleMetadataUpdate(song.uri);
-
-      return null; // Return null for now, it will be updated in background
+      debugPrint('MusicProvider: Loading album art from MediaStore for song: ${song.title}');
+      final albumArt = await MediaStoreService.getAlbumArt(song.id);
+      
+      if (albumArt != null) {
+        debugPrint('MusicProvider: Successfully loaded album art from MediaStore');
+        // Cache the album art
+        await CacheService.cacheAlbumArt(songId, albumArt);
+        _albumArtCache[songId] = albumArt;
+        return albumArt;
+      } else {
+        debugPrint('MusicProvider: No album art found in MediaStore');
+        return null;
+      }
     } catch (e) {
       debugPrint('Error loading album art: $e');
       return null;

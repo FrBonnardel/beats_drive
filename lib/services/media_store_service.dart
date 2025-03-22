@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 
 class MediaStoreService {
   static const platform = MethodChannel('com.beats_drive/media_store');
@@ -145,16 +146,19 @@ class MediaStoreService {
   // Get album art for a specific album ID
   static Future<Uint8List?> getAlbumArt(String albumId) async {
     try {
+      debugPrint('MediaStoreService: Getting album art for album ID: $albumId');
       final result = await platform.invokeMethod('getAlbumArt', {
-        'albumId': albumId,
+        'songId': albumId,
       });
 
       if (result != null) {
+        debugPrint('MediaStoreService: Successfully retrieved album art');
         return result as Uint8List;
       }
+      debugPrint('MediaStoreService: No album art found for album ID: $albumId');
       return null;
     } catch (e) {
-      print('Error getting album art: $e');
+      debugPrint('Error getting album art: $e');
       return null;
     }
   }

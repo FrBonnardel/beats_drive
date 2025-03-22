@@ -10,6 +10,19 @@ import '../services/playback_state_service.dart';
 import '../models/music_models.dart';
 import '../screens/playlist_screen.dart';
 
+class _PlaceholderArt extends StatelessWidget {
+  const _PlaceholderArt();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Icon(
+      Icons.music_note,
+      size: 100,
+      color: Colors.white54,
+    );
+  }
+}
+
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({Key? key}) : super(key: key);
 
@@ -197,20 +210,36 @@ class _PlayerScreenState extends State<PlayerScreen> {
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(8),
-            child: _albumArt != null
-                ? Image.memory(
-                    _albumArt!,
-                    fit: BoxFit.cover,
-                    width: 300,
-                    height: 300,
-                    cacheWidth: 600,
-                    cacheHeight: 600,
-                  )
-                : const Icon(
-                    Icons.music_note,
-                    size: 100,
-                    color: Colors.white54,
-                  ),
+            child: FutureBuilder<Uint8List?>(
+              future: musicProvider.loadAlbumArt(song.id),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white70),
+                    ),
+                  );
+                }
+                if (snapshot.hasError) {
+                  debugPrint('Error loading album art: ${snapshot.error}');
+                }
+                return snapshot.data != null
+                    ? Image.memory(
+                        snapshot.data!,
+                        fit: BoxFit.cover,
+                        width: 300,
+                        height: 300,
+                        cacheWidth: 600,
+                        cacheHeight: 600,
+                        errorBuilder: (context, error, stackTrace) {
+                          debugPrint('Error displaying album art: $error');
+                          return const _PlaceholderArt();
+                        },
+                      )
+                    : const _PlaceholderArt();
+              },
+            ),
           ),
         ),
         const SizedBox(height: 20),

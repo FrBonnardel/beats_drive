@@ -47,21 +47,40 @@ class MiniPlayer extends StatelessWidget {
                       height: 50,
                       margin: const EdgeInsets.all(5),
                       decoration: BoxDecoration(
-                        color: Colors.grey[300],
+                        color: Colors.grey[800],
                         borderRadius: BorderRadius.circular(4),
                       ),
-                      child: song.albumArtUri.isNotEmpty
-                          ? ClipRRect(
-                              borderRadius: BorderRadius.circular(4),
-                              child: Image.network(
-                                song.albumArtUri,
-                                fit: BoxFit.cover,
-                                errorBuilder: (context, error, stackTrace) {
-                                  return const Icon(Icons.music_note);
-                                },
+                      child: FutureBuilder<Uint8List?>(
+                        future: musicProvider.loadAlbumArt(song.id),
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState == ConnectionState.waiting) {
+                            return const Center(
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white70),
                               ),
-                            )
-                          : const Icon(Icons.music_note),
+                            );
+                          }
+                          if (snapshot.hasError) {
+                            debugPrint('Error loading album art: ${snapshot.error}');
+                          }
+                          return snapshot.data != null
+                              ? ClipRRect(
+                                  borderRadius: BorderRadius.circular(4),
+                                  child: Image.memory(
+                                    snapshot.data!,
+                                    fit: BoxFit.cover,
+                                    cacheWidth: 100,
+                                    cacheHeight: 100,
+                                    errorBuilder: (context, error, stackTrace) {
+                                      debugPrint('Error displaying album art: $error');
+                                      return const Icon(Icons.music_note, color: Colors.white70);
+                                    },
+                                  ),
+                                )
+                              : const Icon(Icons.music_note, color: Colors.white70);
+                        },
+                      ),
                     ),
                     // Song Info
                     Expanded(
@@ -76,6 +95,7 @@ class MiniPlayer extends StatelessWidget {
                               style: const TextStyle(
                                 fontWeight: FontWeight.bold,
                                 fontSize: 16,
+                                color: Colors.white,
                               ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
@@ -83,7 +103,7 @@ class MiniPlayer extends StatelessWidget {
                             Text(
                               song.artist,
                               style: TextStyle(
-                                color: Colors.grey[600],
+                                color: Colors.grey[400],
                                 fontSize: 14,
                               ),
                               maxLines: 1,
@@ -99,6 +119,7 @@ class MiniPlayer extends StatelessWidget {
                         audioProvider.isPlaying
                             ? Icons.pause
                             : Icons.play_arrow,
+                        color: Colors.white,
                       ),
                       onPressed: () {
                         if (audioProvider.isPlaying) {

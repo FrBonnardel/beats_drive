@@ -119,59 +119,82 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                     final uri = audioProvider.playlist[index];
                     final song = _songCache[uri];
                     
-                    if (song == null) {
-                      return ListTile(
-                        title: Text(uri.split('/').last),
-                        subtitle: const Text('Loading...'),
-                      );
-                    }
-
-                    return Container(
-                      color: index == audioProvider.currentIndex
-                          ? Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3)
-                          : null,
-                      child: ListTile(
-                        leading: FutureBuilder<Uint8List?>(
-                          future: musicProvider.loadAlbumArt(song.id),
-                          builder: (context, snapshot) {
-                            return Container(
-                              width: 48,
-                              height: 48,
-                              decoration: BoxDecoration(
-                                color: Colors.grey[800],
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: snapshot.data != null
-                                  ? ClipRRect(
-                                      borderRadius: BorderRadius.circular(4),
-                                      child: Image.memory(
-                                        snapshot.data!,
-                                        fit: BoxFit.cover,
-                                      ),
-                                    )
-                                  : const Icon(Icons.music_note, color: Colors.white70),
-                            );
-                          },
-                        ),
-                        title: Text(
-                          song.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        subtitle: Text(
-                          '${song.artist} • ${song.album}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        onTap: () {
-                          audioProvider.selectSong(index);
-                        },
-                      ),
-                    );
+                    return _buildSongListItem(uri, song, index, audioProvider);
                   },
                 ),
         );
       },
+    );
+  }
+
+  Widget _buildSongListItem(String uri, Song? song, int index, AudioProvider audioProvider) {
+    final musicProvider = Provider.of<MusicProvider>(context, listen: false);
+    return Container(
+      color: index == audioProvider.currentIndex
+          ? Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3)
+          : null,
+      child: ListTile(
+        leading: FutureBuilder<Uint8List?>(
+          future: song != null ? musicProvider.loadAlbumArt(song.id) : null,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: Colors.grey[800],
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Center(
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white70),
+                  ),
+                ),
+              );
+            }
+            if (snapshot.hasError) {
+              debugPrint('Error loading album art: ${snapshot.error}');
+            }
+            return Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: Colors.grey[800],
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: snapshot.data != null
+                  ? ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: Image.memory(
+                        snapshot.data!,
+                        fit: BoxFit.cover,
+                        cacheWidth: 96,
+                        cacheHeight: 96,
+                        errorBuilder: (context, error, stackTrace) {
+                          debugPrint('Error displaying album art: $error');
+                          return const Icon(Icons.music_note, color: Colors.white70);
+                        },
+                      ),
+                    )
+                  : const Icon(Icons.music_note, color: Colors.white70),
+            );
+          },
+        ),
+        title: Text(
+          song?.title ?? uri.split('/').last,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Text(
+          song != null ? '${song.artist} • ${song.album}' : 'Loading...',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        onTap: () {
+          audioProvider.selectSong(index);
+        },
+      ),
     );
   }
 

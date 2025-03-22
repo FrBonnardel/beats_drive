@@ -3,23 +3,33 @@ import 'package:hive/hive.dart';
 
 part 'music_models.g.dart';
 
-class Album {
+@HiveType(typeId: 2)
+class Album extends HiveObject {
+  @HiveField(0)
   final String id;
+
+  @HiveField(1)
   final String name;
+
+  @HiveField(2)
   final String artist;
-  final Uint8List? artwork;
+
+  @HiveField(3)
   final List<Song> songs;
-  final int year;
-  final String albumArtUri;
+
+  @HiveField(4)
+  final int? year;
+
+  @HiveField(5)
+  final String? albumArtUri;
 
   Album({
     required this.id,
     required this.name,
     required this.artist,
-    this.artwork,
     required this.songs,
-    this.year = 0,
-    required this.albumArtUri,
+    this.year,
+    this.albumArtUri,
   });
 
   int get totalDuration => songs.fold(0, (sum, song) => sum + song.duration);
@@ -70,6 +80,8 @@ class Song {
   final int dateAdded;
   @HiveField(10)
   final String albumArtUri;
+  @HiveField(11)
+  final int dateModified;
 
   Song({
     required this.id,
@@ -83,6 +95,7 @@ class Song {
     required this.year,
     required this.dateAdded,
     required this.albumArtUri,
+    this.dateModified = 0,
   });
 
   Map<String, dynamic> toMap() {
@@ -98,6 +111,7 @@ class Song {
       'year': year,
       'date_added': dateAdded,
       'album_art_uri': albumArtUri,
+      'date_modified': dateModified,
     };
   }
 
@@ -114,6 +128,7 @@ class Song {
       year: map['year'] as int? ?? 0,
       dateAdded: map['date_added'] as int? ?? 0,
       albumArtUri: map['album_art_uri'] as String? ?? '',
+      dateModified: map['date_modified'] as int? ?? 0,
     );
   }
 
@@ -133,6 +148,7 @@ class Song {
     int? year,
     int? dateAdded,
     String? albumArtUri,
+    int? dateModified,
   }) {
     return Song(
       id: id ?? this.id,
@@ -146,6 +162,7 @@ class Song {
       year: year ?? this.year,
       dateAdded: dateAdded ?? this.dateAdded,
       albumArtUri: albumArtUri ?? this.albumArtUri,
+      dateModified: dateModified ?? this.dateModified,
     );
   }
 
@@ -164,7 +181,8 @@ class Song {
           trackNumber == other.trackNumber &&
           year == other.year &&
           dateAdded == other.dateAdded &&
-          albumArtUri == other.albumArtUri;
+          albumArtUri == other.albumArtUri &&
+          dateModified == other.dateModified;
 
   @override
   int get hashCode =>
@@ -178,7 +196,8 @@ class Song {
       trackNumber.hashCode ^
       year.hashCode ^
       dateAdded.hashCode ^
-      albumArtUri.hashCode;
+      albumArtUri.hashCode ^
+      dateModified.hashCode;
 }
 
 class Playlist {

@@ -51,6 +51,25 @@ class SongListItem extends StatelessWidget {
     return FutureBuilder<Uint8List?>(
       future: provider.loadAlbumArt(song.id),
       builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Container(
+            width: 50,
+            height: 50,
+            decoration: BoxDecoration(
+              color: Colors.grey[800],
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: const Center(
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white70),
+              ),
+            ),
+          );
+        }
+        if (snapshot.hasError) {
+          debugPrint('Error loading album art: ${snapshot.error}');
+        }
         return _buildAlbumArtContainer(snapshot.data);
       },
     );
@@ -69,11 +88,13 @@ class SongListItem extends StatelessWidget {
               borderRadius: BorderRadius.circular(4),
               child: Image.memory(
                 albumArt,
-                width: 50,
-                height: 50,
                 fit: BoxFit.cover,
                 cacheWidth: 100,
                 cacheHeight: 100,
+                errorBuilder: (context, error, stackTrace) {
+                  debugPrint('Error displaying album art: $error');
+                  return const Icon(Icons.music_note, color: Colors.white70);
+                },
               ),
             )
           : const Icon(Icons.music_note, color: Colors.white70),
