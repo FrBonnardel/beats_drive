@@ -83,7 +83,7 @@ class Song {
   @HiveField(11)
   final int dateModified;
 
-  Song({
+  const Song({
     required this.id,
     required this.title,
     required this.artist,
@@ -91,51 +91,81 @@ class Song {
     required this.albumId,
     required this.duration,
     required this.uri,
+    required this.albumArtUri,
     required this.trackNumber,
     required this.year,
     required this.dateAdded,
-    required this.albumArtUri,
     this.dateModified = 0,
   });
 
-  Map<String, dynamic> toMap() {
+  // Empty constructor for creating placeholder songs
+  Song.empty()
+      : id = '',
+        title = '',
+        artist = '',
+        album = '',
+        albumId = '',
+        duration = 0,
+        uri = '',
+        albumArtUri = '',
+        trackNumber = 0,
+        year = 0,
+        dateAdded = 0,
+        dateModified = 0;
+
+  // JSON serialization
+  Map<String, dynamic> toJson() {
     return {
-      '_id': id,
+      'id': id,
       'title': title,
       'artist': artist,
       'album': album,
-      'album_id': albumId,
+      'albumId': albumId,
       'duration': duration,
       'uri': uri,
-      'track': trackNumber,
+      'albumArtUri': albumArtUri,
+      'trackNumber': trackNumber,
       'year': year,
-      'date_added': dateAdded,
-      'album_art_uri': albumArtUri,
-      'date_modified': dateModified,
+      'dateAdded': dateAdded,
+      'dateModified': dateModified,
     };
   }
 
-  factory Song.fromMap(Map<String, dynamic> map) {
+  factory Song.fromJson(Map<String, dynamic> json) {
     return Song(
-      id: (map['_id']?.toString()) ?? '',
-      title: map['title'] as String? ?? 'Unknown Title',
-      artist: map['artist'] as String? ?? 'Unknown Artist',
-      album: map['album'] as String? ?? 'Unknown Album',
-      albumId: (map['album_id']?.toString()) ?? '',
-      duration: map['duration'] as int? ?? 0,
-      uri: map['uri'] as String? ?? '',
-      trackNumber: map['track'] as int? ?? 0,
-      year: map['year'] as int? ?? 0,
-      dateAdded: map['date_added'] as int? ?? 0,
-      albumArtUri: map['album_art_uri'] as String? ?? '',
-      dateModified: map['date_modified'] as int? ?? 0,
+      id: json['id'] as String? ?? '',
+      title: json['title'] as String? ?? '',
+      artist: json['artist'] as String? ?? '',
+      album: json['album'] as String? ?? '',
+      albumId: json['albumId'] as String? ?? '',
+      duration: json['duration'] as int? ?? 0,
+      uri: json['uri'] as String? ?? '',
+      albumArtUri: json['albumArtUri'] as String? ?? '',
+      trackNumber: json['trackNumber'] as int? ?? 0,
+      year: json['year'] as int? ?? 0,
+      dateAdded: json['dateAdded'] as int? ?? 0,
+      dateModified: json['dateModified'] as int? ?? 0,
     );
   }
 
+  // Equality operator
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Song &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          uri == other.uri;
+
+  @override
+  int get hashCode => id.hashCode ^ uri.hashCode;
+
+  // Display getters
   String get displayTitle => title.isEmpty ? 'Unknown Title' : title;
   String get displayArtist => artist.isEmpty ? 'Unknown Artist' : artist;
   String get displayAlbum => album.isEmpty ? 'Unknown Album' : album;
 
+  // CopyWith method
   Song copyWith({
     String? id,
     String? title,
@@ -165,39 +195,6 @@ class Song {
       dateModified: dateModified ?? this.dateModified,
     );
   }
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is Song &&
-          runtimeType == other.runtimeType &&
-          id == other.id &&
-          title == other.title &&
-          artist == other.artist &&
-          album == other.album &&
-          albumId == other.albumId &&
-          duration == other.duration &&
-          uri == other.uri &&
-          trackNumber == other.trackNumber &&
-          year == other.year &&
-          dateAdded == other.dateAdded &&
-          albumArtUri == other.albumArtUri &&
-          dateModified == other.dateModified;
-
-  @override
-  int get hashCode =>
-      id.hashCode ^
-      title.hashCode ^
-      artist.hashCode ^
-      album.hashCode ^
-      albumId.hashCode ^
-      duration.hashCode ^
-      uri.hashCode ^
-      trackNumber.hashCode ^
-      year.hashCode ^
-      dateAdded.hashCode ^
-      albumArtUri.hashCode ^
-      dateModified.hashCode;
 }
 
 class Playlist {

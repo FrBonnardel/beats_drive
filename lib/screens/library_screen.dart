@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:typed_data';
+import 'dart:async';
 import '../providers/music_provider.dart';
 import '../providers/audio_provider.dart';
 import '../models/music_models.dart';
@@ -8,465 +9,183 @@ import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'dart:math';
 import '../widgets/mini_player.dart';
 import 'package:beats_drive/widgets/song_list_item.dart';
+import '../widgets/shared_widgets.dart';
+import '../services/cache_service.dart';
+import '../screens/loading_screen.dart';
+import '../widgets/album_item.dart';
+import '../widgets/artist_item.dart';
+import '../widgets/paginated_grid_list.dart';
+import '../widgets/song_options_bottom_sheet.dart';
+import '../widgets/song_item.dart';
 
-class MusicItemTile extends StatelessWidget {
-  final Map<String, dynamic> file;
-  final VoidCallback onTap;
-  final int index;
+// Static widgets
+class _LibraryAppBar extends StatelessWidget implements PreferredSizeWidget {
+  final VoidCallback onSortPressed;
+  final VoidCallback onSearchPressed;
 
-  const MusicItemTile({
-    super.key,
-    required this.file,
-    required this.onTap,
-    required this.index,
+  const _LibraryAppBar({
+    required this.onSortPressed,
+    required this.onSearchPressed,
   });
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      leading: _AlbumArtWidget(file: file),
-      title: Text(
-        file['title'] ?? file['data'].toString().split('/').last,
-        style: const TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.w500,
+    return AppBar(
+      title: const Text('Library'),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.search),
+          onPressed: onSearchPressed,
         ),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      subtitle: Text(
-        file['artist'] ?? 'Unknown Artist',
-        style: TextStyle(
-          color: Colors.grey[400],
-          fontSize: 14,
+        IconButton(
+          icon: const Icon(Icons.sort),
+          onPressed: onSortPressed,
         ),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      onTap: onTap,
+      ],
     );
   }
+
+  @override
+  Size get preferredSize => const Size.fromHeight(kToolbarHeight);
 }
 
-class _AlbumArtWidget extends StatelessWidget {
-  final Map<String, dynamic> file;
+class _AlbumArtContainer extends StatelessWidget {
+  final Widget child;
+  final double size;
 
-  const _AlbumArtWidget({
-    required this.file,
+  const _AlbumArtContainer({
+    required this.child,
+    this.size = 48,
   });
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(4),
-      child: Container(
-        width: 56,
-        height: 56,
-        color: Colors.grey[800],
-        child: file['albumArt'] != null
-            ? Image.memory(
-                file['albumArt'],
-                fit: BoxFit.cover,
-                cacheWidth: 112,
-                cacheHeight: 112,
-                errorBuilder: (context, error, stackTrace) {
-                  return const _PlaceholderArt();
-                },
-              )
-            : const _PlaceholderArt(),
-      ),
-    );
-  }
-}
-
-class _PlaceholderArt extends StatelessWidget {
-  const _PlaceholderArt();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Icon(Icons.music_note, color: Colors.white);
-  }
-}
-
-class LibraryScreen extends StatefulWidget {
-  const LibraryScreen({Key? key}) : super(key: key);
-
-  @override
-  State<LibraryScreen> createState() => _LibraryScreenState();
-}
-
-class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProviderStateMixin {
-  late TabController _tabController;
-  final TextEditingController _searchController = TextEditingController();
-  String _searchQuery = '';
-  SortOption _currentSort = SortOption.titleAsc;
-  final ScrollController _scrollController = ScrollController();
-  static const int _pageSize = 50;
-  int _currentPage = 0;
-  bool _isLoadingMore = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _tabController = TabController(length: 3, vsync: this);
-    _scrollController.addListener(_onScroll);
-    Future.microtask(() async {
-      final musicProvider = Provider.of<MusicProvider>(context, listen: false);
-      if (musicProvider.songs.isEmpty) {
-        await musicProvider.requestPermissionAndScan();
-      }
-    });
-  }
-
-  void _onScroll() {
-    if (!_isLoadingMore && 
-        _scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 500) {
-      _loadMoreItems();
-    }
-  }
-
-  Future<void> _loadMoreItems() async {
-    if (_isLoadingMore) return;
-
-    final musicProvider = Provider.of<MusicProvider>(context, listen: false);
-    final totalItems = _tabController.index == 0 
-        ? musicProvider.songs.length 
-        : _tabController.index == 1 
-            ? musicProvider.albums.length 
-            : musicProvider.artists.length;
-
-    final currentItems = (_currentPage + 1) * _pageSize;
-    if (currentItems >= totalItems) return;
-    
-    setState(() {
-      _isLoadingMore = true;
-    });
-
-    // Simulate loading delay for smoother UX
-    await Future.delayed(const Duration(milliseconds: 300));
-
-    if (!mounted) return;
-
-    setState(() {
-      _currentPage++;
-      _isLoadingMore = false;
-    });
-  }
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    _tabController.dispose();
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // Reset pagination when dependencies change (e.g., when switching tabs)
-        _currentPage = 0;
-  }
-
-  void _showSortOptions() {
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => _SortOptionsSheet(
-        currentSort: _currentSort,
-        onSortChanged: (sort) {
-          setState(() => _currentSort = sort);
-          Provider.of<MusicProvider>(context, listen: false).setSortOption(sort);
-              Navigator.pop(context);
-            },
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Library'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.sort),
-            onPressed: _showSortOptions,
-          ),
-          Consumer<MusicProvider>(
-            builder: (context, musicProvider, child) {
-              if (musicProvider.isScanning) {
-                return const Padding(
-                  padding: EdgeInsets.all(16.0),
-                  child: SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                );
-              }
-              return IconButton(
-                icon: const Icon(Icons.refresh),
-                onPressed: () => musicProvider.scanMusicFiles(forceRescan: true),
-              );
-            },
-          ),
-        ],
-        bottom: TabBar(
-          controller: _tabController,
-          tabs: const [
-            Tab(text: 'Songs'),
-            Tab(text: 'Albums'),
-            Tab(text: 'Artists'),
-          ],
-        ),
-      ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [
-          _buildSongsList(),
-          _buildAlbumGrid(),
-          _buildArtistsList(),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _tabController.index == 3 ? _createPlaylist : _playRandom,
-        child: Icon(_tabController.index == 3 ? Icons.playlist_add : Icons.shuffle),
-      ),
-    );
-  }
-
-  Widget _buildSongsList() {
-    return Consumer<MusicProvider>(
-      builder: (context, provider, child) {
-        final songs = provider.songs;
-        if (songs.isEmpty) {
-          return const Center(
-            child: Text(
-              'No songs found',
-              style: TextStyle(fontSize: 16, color: Colors.grey),
-            ),
-          );
-        }
-
-        final itemCount = (_currentPage + 1) * _pageSize;
-        final displayedSongs = songs.take(itemCount).toList();
-
-        return ListView.builder(
-          controller: _scrollController,
-          itemCount: displayedSongs.length + (_isLoadingMore ? 1 : 0),
-          itemBuilder: (context, index) {
-            if (index == displayedSongs.length) {
-              return const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(16.0),
-                  child: CircularProgressIndicator(),
-                ),
-              );
-            }
-
-            final song = displayedSongs[index];
-            return SongListItem(song: song);
-          },
-        );
-      },
-    );
-  }
-
-  Widget _buildAlbumGrid() {
-    return Consumer<MusicProvider>(
-      builder: (context, provider, child) {
-        final albums = provider.albums;
-        if (albums.isEmpty) {
-          return const Center(
-            child: Text(
-              'No albums found',
-              style: TextStyle(fontSize: 16, color: Colors.grey),
-            ),
-          );
-        }
-
-        final itemCount = (_currentPage + 1) * (_pageSize ~/ 2);
-        final displayedAlbums = albums.take(itemCount).toList();
-
-        return GridView.builder(
-          controller: _scrollController,
-          padding: const EdgeInsets.all(16),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            childAspectRatio: 0.8,
-            crossAxisSpacing: 16,
-            mainAxisSpacing: 16,
-          ),
-          itemCount: displayedAlbums.length + (_isLoadingMore ? 1 : 0),
-          itemBuilder: (context, index) {
-            if (index == displayedAlbums.length) {
-              return const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(16.0),
-                  child: CircularProgressIndicator(),
-                ),
-              );
-            }
-
-            final album = displayedAlbums[index];
-            final firstSongId = album.songs.isNotEmpty ? album.songs.first.id : '';
-            
-            return InkWell(
-              onTap: () => provider.playAlbum(context, album),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  AspectRatio(
-                    aspectRatio: 1,
-                    child: _buildAlbumArtForAlbum(firstSongId, provider),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    album.displayName,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w500,
-                      color: Colors.white,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  Text(
-                    '${album.displayArtist} • ${album.songs.length} songs',
-                    style: TextStyle(
-                      color: Colors.grey[400],
-                      fontSize: 12,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Widget _buildAlbumArtForAlbum(String songId, MusicProvider provider) {
-    if (songId.isEmpty) return _buildAlbumContainer(null);
-    
-    return FutureBuilder<Uint8List?>(
-      future: provider.loadAlbumArt(songId),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return _buildAlbumContainer(null, isLoading: true);
-        }
-        if (snapshot.hasError) {
-          debugPrint('Error loading album art: ${snapshot.error}');
-        }
-        return _buildAlbumContainer(snapshot.data);
-      },
-    );
-  }
-
-  Widget _buildAlbumContainer(Uint8List? albumArt, {bool isLoading = false}) {
     return Container(
+      width: size,
+      height: size,
       decoration: BoxDecoration(
         color: Colors.grey[800],
         borderRadius: BorderRadius.circular(4),
       ),
-      child: isLoading
-          ? const Center(
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation<Color>(Colors.white70),
-              ),
-            )
-          : albumArt != null
-              ? ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: Image.memory(
-                    albumArt,
-                    fit: BoxFit.cover,
-                    cacheWidth: 200,
-                    cacheHeight: 200,
-                    errorBuilder: (context, error, stackTrace) {
-                      debugPrint('Error displaying album art: $error');
-                      return const _PlaceholderArt();
-                    },
-                  ),
-                )
-              : const _PlaceholderArt(),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(4),
+        child: child,
+      ),
     );
   }
+}
 
-  Widget _buildArtistsList() {
-    return Consumer<MusicProvider>(
-      builder: (context, provider, child) {
-        final artists = provider.artists;
-        if (artists.isEmpty) {
-          return const Center(
-            child: Text(
-              'No artists found',
-              style: TextStyle(fontSize: 16, color: Colors.grey),
+class _AlbumArtPlaceholder extends StatelessWidget {
+  const _AlbumArtPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Icon(Icons.music_note, color: Colors.white70);
+  }
+}
+
+class _AlbumArtLoadingIndicator extends StatelessWidget {
+  const _AlbumArtLoadingIndicator();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: CircularProgressIndicator(
+        strokeWidth: 2,
+        valueColor: AlwaysStoppedAnimation<Color>(Colors.white70),
+      ),
+    );
+  }
+}
+
+class _EmptyView extends StatelessWidget {
+  final String message;
+  final String? subMessage;
+
+  const _EmptyView({
+    required this.message,
+    this.subMessage,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.music_off,
+            size: 64,
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            message,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
             ),
-          );
-        }
-
-        return ListView.builder(
-          controller: _scrollController,
-          itemCount: artists.length,
-          itemBuilder: (context, index) {
-            final artist = artists[index];
-            return ListTile(
-              leading: CircleAvatar(
-                backgroundColor: Colors.grey[800],
-                child: const Icon(Icons.person, color: Colors.white70),
+          ),
+          if (subMessage != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              subMessage!,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
               ),
-              title: Text(
-                artist.displayName,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w500,
-                  color: Colors.white,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(
-                '${artist.totalAlbums} albums • ${artist.totalSongs} songs',
-                style: TextStyle(
-                  color: Colors.grey[400],
-                  fontSize: 12,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              onTap: () {
-                // TODO: Navigate to artist detail screen
-              },
-            );
-          },
-        );
-      },
+            ),
+          ],
+        ],
+      ),
     );
   }
+}
 
-  void _playRandom() {
-    final musicProvider = Provider.of<MusicProvider>(context, listen: false);
-    if (musicProvider.songs.isEmpty) return;
+class _ErrorView extends StatelessWidget {
+  final String error;
+  final VoidCallback onRetry;
 
-    final random = Random();
-    final songs = musicProvider.songs;
-    final randomIndex = random.nextInt(songs.length);
-    final audioProvider = Provider.of<AudioProvider>(context, listen: false);
-    audioProvider.updatePlaylist(songs.map((s) => s.uri).toList());
-    audioProvider.selectSong(randomIndex);
-  }
+  const _ErrorView({
+    required this.error,
+    required this.onRetry,
+  });
 
-  Future<void> _createPlaylist() async {
-    final name = await showDialog<String>(
-      context: context,
-      builder: (context) => _CreatePlaylistDialog(),
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.error_outline,
+            color: Theme.of(context).colorScheme.error,
+            size: 48,
+          ),
+          const SizedBox(height: 16),
+          Text(
+            error,
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: onRetry,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Retry'),
+          ),
+        ],
+      ),
     );
-    if (name != null && name.isNotEmpty) {
-      await Provider.of<MusicProvider>(context, listen: false).createPlaylist(name);
-    }
+  }
+}
+
+class _LoadingIndicator extends StatelessWidget {
+  const _LoadingIndicator();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: CircularProgressIndicator(),
+    );
   }
 }
 
@@ -518,6 +237,8 @@ class _SortOptionsSheet extends StatelessWidget {
 }
 
 class _CreatePlaylistDialog extends StatefulWidget {
+  const _CreatePlaylistDialog();
+
   @override
   _CreatePlaylistDialogState createState() => _CreatePlaylistDialogState();
 }
@@ -557,64 +278,397 @@ class _CreatePlaylistDialogState extends State<_CreatePlaylistDialog> {
   }
 }
 
-class _ErrorView extends StatelessWidget {
-  final String error;
-  final VoidCallback onRetry;
-
-  const _ErrorView({required this.error, required this.onRetry});
+class LibraryScreen extends StatefulWidget {
+  const LibraryScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(
-            error,
-            style: TextStyle(color: Theme.of(context).colorScheme.error),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 16),
-                  FilledButton.icon(
-            onPressed: onRetry,
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Retry'),
-                  ),
-                ],
-              ),
-            );
-          }
+  State<LibraryScreen> createState() => LibraryScreenState();
 }
 
-class _EmptyView extends StatelessWidget {
-  const _EmptyView();
+class LibraryScreenState extends State<LibraryScreen> with SingleTickerProviderStateMixin {
+  final List<Song> _songs = [];
+  final List<Album> _albums = [];
+  final List<Artist> _artists = [];
+  bool _isLoading = false;
+  bool _hasMore = true;
+  int _currentPage = 0;
+  static const int _pageSize = 20;
+  String? _error;
+  late TabController _tabController;
+  int _currentTab = 0;
+  SortOption _currentSort = SortOption.titleAsc;
+
+  void showSortDialog() {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => _SortOptionsSheet(
+        currentSort: _currentSort,
+        onSortChanged: (option) {
+          setState(() {
+            _currentSort = option;
+          });
+          Navigator.pop(context);
+        },
+      ),
+    );
+  }
+
+  void showSearchDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Search'),
+        content: TextField(
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'Search songs, albums, or artists',
+            border: OutlineInputBorder(),
+          ),
+          onChanged: (value) {
+            // TODO: Implement search functionality
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 3, vsync: this);
+    _tabController.addListener(() {
+      setState(() {
+        _currentTab = _tabController.index;
+      });
+    });
+    _loadMoreSongs();
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadMoreSongs() async {
+    if (_isLoading || !_hasMore) return;
+
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final musicProvider = Provider.of<MusicProvider>(context, listen: false);
+      final songs = await musicProvider.getSongsByUris(
+        musicProvider.songs
+            .skip(_currentPage * _pageSize)
+            .take(_pageSize)
+            .map((song) => song.uri)
+            .toList(),
+      );
+
+      if (mounted) {
+        setState(() {
+          _songs.addAll(songs);
+          _currentPage++;
+          _hasMore = songs.length == _pageSize;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = 'Failed to load songs: $e';
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadMoreAlbums() async {
+    if (_isLoading || !_hasMore) return;
+
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final musicProvider = Provider.of<MusicProvider>(context, listen: false);
+      final albums = musicProvider.albums
+          .skip(_currentPage * _pageSize)
+          .take(_pageSize)
+          .toList();
+
+      if (mounted) {
+        setState(() {
+          _albums.addAll(albums);
+          _currentPage++;
+          _hasMore = albums.length == _pageSize;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = 'Failed to load albums: $e';
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadMoreArtists() async {
+    if (_isLoading || !_hasMore) return;
+
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final musicProvider = Provider.of<MusicProvider>(context, listen: false);
+      final artists = musicProvider.artists
+          .skip(_currentPage * _pageSize)
+          .take(_pageSize)
+          .toList();
+
+      if (mounted) {
+        setState(() {
+          _artists.addAll(artists);
+          _currentPage++;
+          _hasMore = artists.length == _pageSize;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = 'Failed to load artists: $e';
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  void _handleSongTap(Song song) {
+    final audioProvider = Provider.of<AudioProvider>(context, listen: false);
+    final index = audioProvider.playlist.indexOf(song.uri);
+    if (index != -1) {
+      audioProvider.selectSong(index);
+      audioProvider.play();
+    } else {
+      // If song is not in playlist, add it and play
+      audioProvider.addToPlaylist(song.uri);
+      audioProvider.selectSong(audioProvider.playlist.length - 1);
+      audioProvider.play();
+    }
+  }
+
+  void _handleSongLongPress(Song song) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SongOptionsBottomSheet(song: song),
+    );
+  }
+
+  void _handleAlbumTap(Album album) {
+    // TODO: Navigate to album detail screen
+  }
+
+  void _handleAlbumLongPress(Album album) {
+    // TODO: Show album options
+  }
+
+  void _handleArtistTap(Artist artist) {
+    // TODO: Navigate to artist detail screen
+  }
+
+  void _handleArtistLongPress(Artist artist) {
+    // TODO: Show artist options
+  }
 
   @override
   Widget build(BuildContext context) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.music_off,
-                    size: 64,
-                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'No music found',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Add some music to your device',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-                    ),
-                  ),
-                ],
+    return Scaffold(
+      body: Column(
+        children: [
+          TabBar(
+            controller: _tabController,
+            tabs: const [
+              Tab(text: 'Songs'),
+              Tab(text: 'Albums'),
+              Tab(text: 'Artists'),
+            ],
+          ),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                // Songs tab
+                SongItem(
+                  songs: _songs,
+                  isLoading: _isLoading,
+                  hasMore: _hasMore,
+                  error: _error,
+                  onLoadMore: _loadMoreSongs,
+                  onRetry: () {
+                    setState(() {
+                      _error = null;
+                      _currentPage = 0;
+                      _songs.clear();
+                      _hasMore = true;
+                    });
+                    _loadMoreSongs();
+                  },
+                  onSongTap: _handleSongTap,
+                  onSongLongPress: _handleSongLongPress,
+                ),
+                // Albums tab
+                PaginatedGridList(
+                  items: _albums,
+                  isLoading: _isLoading,
+                  hasMore: _hasMore,
+                  error: _error,
+                  onLoadMore: _loadMoreAlbums,
+                  onRetry: () {
+                    setState(() {
+                      _error = null;
+                      _currentPage = 0;
+                      _albums.clear();
+                      _hasMore = true;
+                    });
+                    _loadMoreAlbums();
+                  },
+                  onItemTap: _handleAlbumTap,
+                  onItemLongPress: _handleAlbumLongPress,
+                  itemBuilder: (album) => AlbumItem(album: album),
+                  crossAxisCount: 2,
+                ),
+                // Artists tab
+                PaginatedGridList(
+                  items: _artists,
+                  isLoading: _isLoading,
+                  hasMore: _hasMore,
+                  error: _error,
+                  onLoadMore: _loadMoreArtists,
+                  onRetry: () {
+                    setState(() {
+                      _error = null;
+                      _currentPage = 0;
+                      _artists.clear();
+                      _hasMore = true;
+                    });
+                    _loadMoreArtists();
+                  },
+                  onItemTap: _handleArtistTap,
+                  onItemLongPress: _handleArtistLongPress,
+                  itemBuilder: (artist) => ArtistItem(artist: artist),
+                  crossAxisCount: 2,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class SongListItem extends StatelessWidget {
+  final Song song;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  const SongListItem({
+    Key? key,
+    required this.song,
+    required this.onTap,
+    required this.onLongPress,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: song.albumArtUri.isNotEmpty
+          ? ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: Image.network(
+                song.albumArtUri,
+                width: 56,
+                height: 56,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) => const Icon(Icons.music_note),
+              ),
+            )
+          : const Icon(Icons.music_note),
+      title: Text(song.title),
+      subtitle: Text(song.artist),
+      onTap: onTap,
+      onLongPress: onLongPress,
+    );
+  }
+}
+
+class SongOptionsBottomSheet extends StatelessWidget {
+  final Song song;
+
+  const SongOptionsBottomSheet({
+    Key? key,
+    required this.song,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            song.title,
+            style: Theme.of(context).textTheme.titleLarge,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            song.artist,
+            style: Theme.of(context).textTheme.bodyMedium,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          ListTile(
+            leading: const Icon(Icons.playlist_add),
+            title: const Text('Add to Playlist'),
+            onTap: () {
+              // TODO: Implement add to playlist functionality
+              Navigator.pop(context);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.favorite_border),
+            title: const Text('Add to Favorites'),
+            onTap: () {
+              // TODO: Implement add to favorites functionality
+              Navigator.pop(context);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.info_outline),
+            title: const Text('Song Info'),
+            onTap: () {
+              // TODO: Implement song info functionality
+              Navigator.pop(context);
+            },
+          ),
+        ],
       ),
     );
   }

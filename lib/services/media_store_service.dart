@@ -162,4 +162,52 @@ class MediaStoreService {
       return null;
     }
   }
+
+  // Get all songs from MediaStore
+  static Future<List<Map<String, dynamic>>> getSongs() async {
+    try {
+      final result = await platform.invokeMethod('getSongs');
+      return List<Map<String, dynamic>>.from(result ?? []);
+    } catch (e) {
+      debugPrint('Error getting songs from MediaStore: $e');
+      return [];
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> getSongsForPage(int page, int pageSize) async {
+    try {
+      final result = await platform.invokeMethod('getSongsForPage', {
+        'page': page,
+        'pageSize': pageSize,
+      });
+      return List<Map<String, dynamic>>.from(result ?? []);
+    } catch (e) {
+      debugPrint('Error getting songs page from MediaStore: $e');
+      return [];
+    }
+  }
+
+  static Future<int> getTotalSongCount() async {
+    try {
+      final result = await platform.invokeMethod('getTotalSongCount');
+      return result as int? ?? 0;
+    } catch (e) {
+      debugPrint('Error getting total song count from MediaStore: $e');
+      return 0;
+    }
+  }
+
+  static Future<List<Map<String, dynamic>?>> getSongsMetadata(List<String> uris) async {
+    try {
+      final result = await platform.invokeMethod('getSongsMetadata', {'uris': uris});
+      return List<Map<String, dynamic>?>.from(
+        (result as List).map((item) => 
+          item != null ? Map<String, dynamic>.from(item) : null
+        )
+      );
+    } catch (e) {
+      debugPrint('Error getting songs metadata from MediaStore: $e');
+      return List.filled(uris.length, null);
+    }
+  }
 } 

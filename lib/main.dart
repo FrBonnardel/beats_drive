@@ -4,17 +4,35 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'providers/music_provider.dart';
 import 'providers/audio_provider.dart';
 import 'screens/loading_screen.dart';
+import 'screens/main_screen.dart';
 import 'services/background_service.dart';
 import 'services/cache_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
+  // Initialize Hive
+  await Hive.initFlutter();
+
   // Initialize services
-  await CacheService.initialize();
-  await BackgroundService.initialize();
-  
-  runApp(const MyApp());
+  final cacheService = CacheService();
+  await cacheService.initialize();
+  final musicProvider = MusicProvider(cacheService);
+  final audioProvider = AudioProvider(cacheService);
+
+  // Request permissions and start quick scan
+  await musicProvider.requestPermissionAndScan();
+
+  runApp(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider<MusicProvider>.value(value: musicProvider),
+        ChangeNotifierProvider<AudioProvider>.value(value: audioProvider),
+        Provider<CacheService>.value(value: cacheService),
+      ],
+      child: const MyApp(),
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {
@@ -22,22 +40,14 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MultiProvider(
-      providers: [
-        ChangeNotifierProvider(create: (_) => MusicProvider()),
-        ChangeNotifierProvider(create: (_) => AudioProvider()),
-      ],
-      child: MaterialApp(
-        title: 'Beats Drive',
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: Colors.deepPurple,
-            brightness: Brightness.dark,
-          ),
-          useMaterial3: true,
-        ),
-        home: const LoadingScreen(),
-      ),
+    return MaterialApp(
+      title: 'Beats Drive',
+      theme: ThemeData.dark(useMaterial3: true),
+      initialRoute: '/main',
+      routes: {
+        '/': (context) => const LoadingScreen(),
+        '/main': (context) => const MainScreen(),
+      },
     );
   }
 }

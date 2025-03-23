@@ -1,357 +1,177 @@
-import 'dart:io';
 import 'dart:convert';
-import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter/foundation.dart';
-import 'package:hive_flutter/hive_flutter.dart';
-import 'dart:typed_data';
-import 'package:crypto/crypto.dart';
 import '../models/music_models.dart';
-import 'package:flutter_cache_manager/flutter_cache_manager.dart';
+import 'package:flutter/foundation.dart';
+import 'package:hive/hive.dart';
+import 'dart:isolate';
 
 class CacheService {
-  static const String _musicFilesKey = 'music_files';
-  static const String _lastScanKey = 'lastScan';
-  static const String _cacheVersionKey = 'cache_version';
-  static const String _forceRescanKey = 'force_rescan';
-  static const String _checksumKey = 'music_checksum';
-  static const int _currentCacheVersion = 1;
-  static const String _songBox = 'songs';
-  static const String _albumArtBox = 'albumArt';
-  static const String _metadataBox = 'metadata';
-  static Box<Map>? _songCache;
-  static Box<List<int>>? _albumArtCache;
-  static Box<dynamic>? _metadataCache;
-  static bool _isInitialized = false;
-  static final DefaultCacheManager _cacheManager = DefaultCacheManager();
+  static const String _songsKey = 'cached_songs';
+  static const String _albumArtKey = 'album_art_';
+  static const String _lastScanKey = 'last_scan_time';
+  static const String _songHashKey = 'songs_hash';
+  static const Duration _cacheValidityDuration = Duration(hours: 24);
+  static const int _maxCacheSize = 1000; // Maximum number of songs to cache
+  
+  late SharedPreferences _prefs;
+  Box<Map>? _songCache;
+  final Map<String, Song> _memoryCache = {};
+  
+  Future<void> initialize() async {
+    _prefs = await SharedPreferences.getInstance();
+    _songCache = await Hive.openBox<Map>('songs');
+    _loadMemoryCache();
+  }
 
-  static Future<void> initialize() async {
-    if (_isInitialized) return;
-
+  void _loadMemoryCache() {
     try {
-      await Hive.initFlutter();
+      final songs = _songCache?.values.map((songMap) {
+        return Song.fromJson(Map<String, dynamic>.from(songMap));
+      }).toList() ?? [];
       
-      // Register adapters if not already registered
-      if (!Hive.isAdapterRegistered(0)) {
-        Hive.registerAdapter(SongAdapter());
+      // Only keep the most recent songs in memory
+      songs.sort((a, b) => b.dateAdded.compareTo(a.dateAdded));
+      for (var song in songs.take(_maxCacheSize)) {
+        _memoryCache[song.uri] = song;
       }
-      
-      // Open boxes with retry mechanism
-      _songCache = await _openBoxWithRetry<Map>(_songBox);
-      _albumArtCache = await _openBoxWithRetry<List<int>>(_albumArtBox);
-      _metadataCache = await _openBoxWithRetry(_metadataBox);
-      
-      _isInitialized = true;
-      debugPrint('Cache service initialized successfully');
     } catch (e) {
-      debugPrint('Error initializing cache service: $e');
-      await _handleCacheError();
+      debugPrint('Error loading memory cache: $e');
     }
   }
 
-  static Future<Box<T>> _openBoxWithRetry<T>(String name, {int maxRetries = 3}) async {
-    int attempts = 0;
-    while (attempts < maxRetries) {
-      try {
-        return await Hive.openBox<T>(name);
-      } catch (e) {
-        attempts++;
-        debugPrint('Failed to open box $name (attempt $attempts): $e');
-        if (attempts == maxRetries) rethrow;
-        
-        // Delete the box and try again
-        await Hive.deleteBoxFromDisk(name);
-        await Future.delayed(Duration(milliseconds: 100 * attempts));
-      }
-    }
-    throw Exception('Failed to open box $name after $maxRetries attempts');
-  }
-
-  static Future<void> _handleCacheError() async {
+  List<Song> getCachedSongs() {
     try {
-      _isInitialized = false;
-      
-      // Close boxes if they're open
-      await _songCache?.close();
-      await _albumArtCache?.close();
-      await _metadataCache?.close();
-      
-      // Delete boxes from disk
-      await Hive.deleteBoxFromDisk(_songBox);
-      await Hive.deleteBoxFromDisk(_albumArtBox);
-      await Hive.deleteBoxFromDisk(_metadataBox);
-      
-      // Try to reinitialize
-      _songCache = await _openBoxWithRetry<Map>(_songBox);
-      _albumArtCache = await _openBoxWithRetry<List<int>>(_albumArtBox);
-      _metadataCache = await _openBoxWithRetry(_metadataBox);
-      
-      _isInitialized = true;
-      debugPrint('Cache service reinitialized after error');
+      return _memoryCache.values.toList();
     } catch (e) {
-      debugPrint('Failed to reinitialize cache service: $e');
-      _isInitialized = false;
-    }
-  }
-
-  static String _calculateChecksum(List<Song> songs) {
-    final buffer = StringBuffer();
-    for (var song in songs) {
-      buffer.write('${song.uri}${song.dateAdded}${song.dateModified}');
-    }
-    return sha256.convert(utf8.encode(buffer.toString())).toString();
-  }
-
-  static Future<void> cacheSongs(List<Song> songs) async {
-    try {
-      if (_songCache == null) {
-        debugPrint('Song cache not initialized');
-        return;
-      }
-
-      // Calculate checksum
-      final checksum = _calculateChecksum(songs);
-      
-      // Save songs to cache
-      await _songCache?.clear();
-      final songsMap = {
-        for (var song in songs)
-          song.uri: song.toMap()
-      };
-      await _songCache?.putAll(songsMap);
-      
-      // Save metadata
-      await _metadataCache?.put(_lastScanKey, DateTime.now().millisecondsSinceEpoch);
-      await _metadataCache?.put(_checksumKey, checksum);
-      
-      debugPrint('CacheService: Saved ${songs.length} songs to cache with checksum: $checksum');
-    } catch (e) {
-      debugPrint('Error saving songs to cache: $e');
-    }
-  }
-
-  static List<Song> getCachedSongs() {
-    try {
-      if (_songCache == null) {
-        debugPrint('CacheService: Song cache not initialized');
-        return [];
-      }
-
-      final songs = _songCache!.values
-          .map((songMap) => Song.fromMap(Map<String, dynamic>.from(songMap)))
-          .toList();
-      
-      debugPrint('CacheService: Loaded ${songs.length} songs from existing cache');
-      return songs;
-    } catch (e) {
-      debugPrint('Error loading songs from cache: $e');
+      debugPrint('Error getting cached songs: $e');
       return [];
     }
   }
 
-  static Future<bool> hasMusicLibraryChanged(List<Song> currentSongs) async {
+  Future<List<Song>> getCachedSongsForPage(int page, int pageSize) async {
+    final allSongs = getCachedSongs();
+    final startIndex = page * pageSize;
+    if (startIndex >= allSongs.length) return [];
+    
+    final endIndex = (startIndex + pageSize).clamp(0, allSongs.length);
+    return allSongs.sublist(startIndex, endIndex);
+  }
+
+  Future<void> cacheSongsForPage(int page, List<Song> songs) async {
+    final allSongs = getCachedSongs();
+    final startIndex = page * songs.length;
+    
+    // If this is the first page, clear existing songs
+    if (page == 0) {
+      allSongs.clear();
+    }
+    
+    // Ensure the list is large enough
+    while (allSongs.length < startIndex + songs.length) {
+      allSongs.add(Song.empty());
+    }
+    
+    // Replace songs at the correct indices
+    for (var i = 0; i < songs.length; i++) {
+      allSongs[startIndex + i] = songs[i];
+    }
+    
+    // Remove any trailing empty songs
+    while (allSongs.isNotEmpty && allSongs.last == Song.empty()) {
+      allSongs.removeLast();
+    }
+    
+    await cacheSongs(allSongs);
+  }
+
+  Future<void> cacheSongs(List<Song> songs) async {
     try {
-      if (_metadataCache == null) {
-        debugPrint('Metadata cache not initialized');
-        return true;
+      // Update memory cache
+      _memoryCache.clear();
+      for (var song in songs.take(_maxCacheSize)) {
+        _memoryCache[song.uri] = song;
       }
 
-      final cachedChecksum = _metadataCache?.get(_checksumKey) as String?;
-      if (cachedChecksum == null) return true;
-
-      final currentChecksum = _calculateChecksum(currentSongs);
-      return cachedChecksum != currentChecksum;
+      // Cache songs in Hive in a separate isolate
+      await compute(_cacheSongsInIsolate, {
+        'songs': songs,
+        'maxCacheSize': _maxCacheSize,
+      });
+      
+      // Update metadata
+      await _updateLastScanTime();
+      await _updateSongsHash(songs);
     } catch (e) {
-      debugPrint('Error checking music library changes: $e');
-      return true;
+      debugPrint('Error caching songs: $e');
     }
   }
 
-  static Future<void> cacheAlbumArt(String songId, Uint8List albumArt) async {
-    try {
-      if (_albumArtCache == null) {
-        debugPrint('Album art cache not initialized');
-        return;
-      }
+  // Cache songs in a separate isolate
+  static Future<void> _cacheSongsInIsolate(Map<String, dynamic> params) async {
+    final songs = params['songs'] as List<Song>;
+    final maxCacheSize = params['maxCacheSize'] as int;
+    
+    final box = await Hive.openBox<Map>('songs');
+    await box.clear();
+    
+    final songsMap = {
+      for (var song in songs.take(maxCacheSize))
+        song.uri: song.toJson()
+    };
+    await box.putAll(songsMap);
+  }
 
-      // Save to Hive cache
-      await _albumArtCache?.put(songId, albumArt);
-      
-      // Also save to file cache for better persistence
-      final cacheKey = 'album_art_$songId';
-      await _cacheManager.putFile(
-        cacheKey,
-        albumArt,
-        maxAge: const Duration(days: 7),
-      );
-      
-      debugPrint('Cached album art for song $songId');
+  Future<List<int>?> getCachedAlbumArt(String songId) async {
+    final artString = _prefs.getString('${_albumArtKey}$songId');
+    if (artString == null) return null;
+    
+    try {
+      final List<dynamic> artList = jsonDecode(artString);
+      return artList.cast<int>();
+    } catch (e) {
+      debugPrint('Error decoding cached album art: $e');
+      return null;
+    }
+  }
+
+  Future<void> cacheAlbumArt(String songId, List<int> albumArt) async {
+    try {
+      final artJson = jsonEncode(albumArt);
+      await _prefs.setString('${_albumArtKey}$songId', artJson);
     } catch (e) {
       debugPrint('Error caching album art: $e');
     }
   }
 
-  static Future<Uint8List?> getCachedAlbumArt(String songId) async {
-    try {
-      if (_albumArtCache == null) {
-        debugPrint('Album art cache not initialized');
-        return null;
-      }
-
-      // Check Hive cache first
-      final data = _albumArtCache?.get(songId);
-      if (data != null) {
-        return Uint8List.fromList(data);
-      }
-
-      // Check file cache
-      final cacheKey = 'album_art_$songId';
-      final file = await _cacheManager.getFileFromCache(cacheKey);
-      if (file != null) {
-        final bytes = await file.file.readAsBytes();
-        // Update Hive cache for faster access next time
-        await _albumArtCache?.put(songId, bytes);
-        return bytes;
-      }
-
-      return null;
-    } catch (e) {
-      debugPrint('Error retrieving cached album art: $e');
-      return null;
-    }
+  Future<void> _updateLastScanTime() async {
+    await _prefs.setInt(_lastScanKey, DateTime.now().millisecondsSinceEpoch);
   }
 
-  static bool shouldRescan() {
-    try {
-      if (_metadataCache == null) {
-        debugPrint('Metadata cache not initialized');
-        return true;
-      }
-
-      final lastScan = _metadataCache?.get(_lastScanKey) as int?;
-      if (lastScan == null) return true;
-      
-      final lastScanTime = DateTime.fromMillisecondsSinceEpoch(lastScan);
-      final now = DateTime.now();
-      return now.difference(lastScanTime).inHours >= 1; // Rescan every hour
-    } catch (e) {
-      debugPrint('Error checking rescan status: $e');
-      return true;
-    }
+  Future<void> _updateSongsHash(List<Song> songs) async {
+    final hash = songs.map((s) => s.uri).join(',').hashCode.toString();
+    await _prefs.setString(_songHashKey, hash);
   }
 
-  static Future<void> clearCache() async {
-    try {
-      await _songCache?.clear();
-      await _albumArtCache?.clear();
-      await _metadataCache?.clear();
-      await _cacheManager.emptyCache();
-      debugPrint('Cache cleared successfully');
-    } catch (e) {
-      debugPrint('Error clearing cache: $e');
-    }
+  Future<bool> hasMusicLibraryChanged(List<Song> newSongs) async {
+    final oldHash = _prefs.getString(_songHashKey);
+    if (oldHash == null) return true;
+    
+    final newHash = newSongs.map((s) => s.uri).join(',').hashCode.toString();
+    return oldHash != newHash;
   }
 
-  static Future<void> saveMusicFiles(List<String> files) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      debugPrint('Saving ${files.length} music files to cache');
-      
-      // Save files in chunks to avoid memory issues
-      final chunkSize = 1000;
-      for (var i = 0; i < files.length; i += chunkSize) {
-        final chunk = files.skip(i).take(chunkSize).toList();
-        await prefs.setString('${_musicFilesKey}_${i ~/ chunkSize}', jsonEncode(chunk));
-        debugPrint('Saved chunk ${(i ~/ chunkSize) + 1} with ${chunk.length} files');
-      }
-      
-      await prefs.setInt(_lastScanKey, DateTime.now().millisecondsSinceEpoch);
-      await prefs.setInt(_cacheVersionKey, _currentCacheVersion);
-      await prefs.setBool(_forceRescanKey, false);
-      debugPrint('Cache save complete with ${files.length} total files');
-    } catch (e) {
-      debugPrint('Error saving music files: $e');
-    }
+  bool shouldRescan() {
+    final lastScan = _prefs.getInt(_lastScanKey);
+    if (lastScan == null) return true;
+    
+    final lastScanTime = DateTime.fromMillisecondsSinceEpoch(lastScan);
+    final now = DateTime.now();
+    return now.difference(lastScanTime) > _cacheValidityDuration;
   }
 
-  static Future<List<String>> loadMusicFiles() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      debugPrint('Loading music files from cache');
-      
-      // Check cache version
-      final version = prefs.getInt(_cacheVersionKey) ?? 0;
-      if (version != _currentCacheVersion) {
-        debugPrint('Cache version mismatch: $version != $_currentCacheVersion, clearing cache');
-        await clearCache();
-        return [];
-      }
-
-      // Check if we have any cached files
-      final hasFiles = prefs.containsKey('${_musicFilesKey}_0');
-      if (!hasFiles) {
-        debugPrint('No cached files found');
-        return [];
-      }
-
-      final List<String> allFiles = [];
-      var chunkIndex = 0;
-      
-      while (true) {
-        final chunkJson = prefs.getString('${_musicFilesKey}_$chunkIndex');
-        if (chunkJson == null) break;
-        
-        final List<dynamic> chunk = jsonDecode(chunkJson);
-        allFiles.addAll(chunk.cast<String>());
-        debugPrint('Loaded chunk $chunkIndex with ${chunk.length} files');
-        chunkIndex++;
-      }
-      
-      debugPrint('Cache load complete with ${allFiles.length} total files');
-      return allFiles;
-    } catch (e) {
-      debugPrint('Error loading music files: $e');
-      return [];
-    }
+  Future<void> clearCache() async {
+    await _prefs.clear();
+    await _songCache?.clear();
+    _memoryCache.clear();
   }
-
-  static Future<bool> needsRescan() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final forceRescan = prefs.getBool(_forceRescanKey) ?? false;
-      return forceRescan;
-    } catch (e) {
-      print('Error checking scan status: $e');
-      return true;
-    }
-  }
-
-  static Future<void> setForceRescan(bool force) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(_forceRescanKey, force);
-    } catch (e) {
-      print('Error setting force rescan: $e');
-    }
-  }
-
-  static Future<DateTime?> getLastScanTime() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final timestamp = prefs.getInt(_lastScanKey);
-      return timestamp != null ? DateTime.fromMillisecondsSinceEpoch(timestamp) : null;
-    } catch (e) {
-      debugPrint('Error getting last scan time: $e');
-      return null;
-    }
-  }
-
-  static Future<void> setLastScanTime(DateTime time) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setInt(_lastScanKey, time.millisecondsSinceEpoch);
-    } catch (e) {
-      debugPrint('Error setting last scan time: $e');
-    }
-  }
-} 
+}

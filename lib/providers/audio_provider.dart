@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../services/media_notification_service.dart';
 import '../models/music_models.dart';
 import '../providers/music_provider.dart';
+import '../services/cache_service.dart';
 
 class AudioProvider extends ChangeNotifier {
   final AudioPlayer _audioPlayer = AudioPlayer();
@@ -29,8 +30,16 @@ class AudioProvider extends ChangeNotifier {
   static const String _isShuffleEnabledKey = 'last_shuffle_enabled';
   static const String _isRepeatEnabledKey = 'last_repeat_enabled';
   static const String _positionKey = 'last_position';
+  final CacheService _cacheService;
 
-  AudioProvider() {
+  // Add position notifier for isolated updates
+  final ValueNotifier<Duration> positionNotifier = ValueNotifier(Duration.zero);
+
+  // Add getter for position stream
+  Stream<Duration> get positionStream => _audioPlayer.positionStream;
+
+  AudioProvider(this._cacheService) {
+    _musicProvider = MusicProvider(_cacheService);
     _initProvider();
     _setupMediaNotificationListeners();
     _setupAudioPlayer();
@@ -38,7 +47,7 @@ class AudioProvider extends ChangeNotifier {
   }
 
   Future<void> _initProvider() async {
-    _musicProvider = MusicProvider();
+    // Removed redundant initialization of _musicProvider
   }
 
   Future<void> _restoreState() async {
@@ -67,9 +76,7 @@ class AudioProvider extends ChangeNotifier {
           final sources = <AudioSource>[];
           for (var uri in _playlist) {
             if (!_audioSourceCache.containsKey(uri)) {
-              final source = uri.startsWith('content://')
-                  ? AudioSource.uri(Uri.parse(uri))
-                  : AudioSource.file(uri);
+              final source = AudioSource.uri(Uri.parse(uri));
               _audioSourceCache[uri] = source;
               sources.add(source);
             }
@@ -139,11 +146,16 @@ class AudioProvider extends ChangeNotifier {
       notifyListeners();
     });
 
+    // Debounce position updates to reduce UI updates
+    Timer? _positionDebounceTimer;
     _audioPlayer.positionStream.listen((position) {
       _position = position;
-      _updateMediaNotification();
-      _saveState();
-      notifyListeners();
+      _positionDebounceTimer?.cancel();
+      _positionDebounceTimer = Timer(const Duration(milliseconds: 100), () {
+        _updateMediaNotification();
+        _saveState();
+        notifyListeners();
+      });
     });
 
     _audioPlayer.currentIndexStream.listen((index) async {
@@ -175,17 +187,28 @@ class AudioProvider extends ChangeNotifier {
   Future<void> _updateMediaNotification() async {
     final song = _currentSongNotifier.value;
     if (song != null) {
-      await MediaNotificationService.showNotification(
-        title: song.title,
-        author: song.artist,
-        image: null,
-        play: _isPlaying,
-      );
+      try {
+        await MediaNotificationService.showNotification(
+          title: song.title,
+          author: song.artist,
+          image: null,
+          play: _isPlaying,
+        );
+      } catch (e) {
+        debugPrint('Error updating media notification: $e');
+      }
     }
   }
 
   Future<void> play() async {
     try {
+      if (_playlist.isEmpty) return;
+      
+      if (_currentIndex < 0) {
+        _currentIndex = 0;
+      }
+      
+      await _audioPlayer.seek(Duration.zero, index: _currentIndex);
       await _audioPlayer.play();
       _isPlaying = true;
       notifyListeners();
@@ -195,39 +218,63 @@ class AudioProvider extends ChangeNotifier {
   }
 
   Future<void> pause() async {
-    await _audioPlayer.pause();
-    _isPlaying = false;
-    notifyListeners();
+    try {
+      await _audioPlayer.pause();
+      _isPlaying = false;
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error pausing audio: $e');
+    }
   }
 
   Future<void> stop() async {
-    await _audioPlayer.stop();
-    _isPlaying = false;
-    await MediaNotificationService.hideNotification();
-    notifyListeners();
+    try {
+      await _audioPlayer.stop();
+      _isPlaying = false;
+      await MediaNotificationService.hideNotification();
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error stopping audio: $e');
+    }
   }
 
   Future<void> seek(Duration position) async {
-    await _audioPlayer.seek(position);
+    try {
+      await _audioPlayer.seek(position);
+    } catch (e) {
+      debugPrint('Error seeking audio: $e');
+    }
   }
 
   Future<void> setVolume(double volume) async {
-    await _audioPlayer.setVolume(volume);
+    try {
+      await _audioPlayer.setVolume(volume);
+    } catch (e) {
+      debugPrint('Error setting volume: $e');
+    }
   }
 
   Future<void> previous() async {
-    if (_currentIndex > 0) {
-      _currentIndex--;
-      await _audioPlayer.seek(Duration.zero, index: _currentIndex);
-      await _audioPlayer.play();
+    try {
+      if (_currentIndex > 0) {
+        _currentIndex--;
+        await _audioPlayer.seek(Duration.zero, index: _currentIndex);
+        await _audioPlayer.play();
+      }
+    } catch (e) {
+      debugPrint('Error playing previous song: $e');
     }
   }
 
   Future<void> next() async {
-    if (_currentIndex < _playlist.length - 1) {
-      _currentIndex++;
-      await _audioPlayer.seek(Duration.zero, index: _currentIndex);
-      await _audioPlayer.play();
+    try {
+      if (_currentIndex < _playlist.length - 1) {
+        _currentIndex++;
+        await _audioPlayer.seek(Duration.zero, index: _currentIndex);
+        await _audioPlayer.play();
+      }
+    } catch (e) {
+      debugPrint('Error playing next song: $e');
     }
   }
 
@@ -308,6 +355,25 @@ class AudioProvider extends ChangeNotifier {
     }
   }
 
+  Future<void> addToPlaylist(String uri) async {
+    if (!_playlist.contains(uri)) {
+      _playlist.add(uri);
+      final source = AudioSource.uri(Uri.parse(uri));
+      _audioSourceCache[uri] = source;
+      
+      // Update audio source
+      final sources = <AudioSource>[];
+      for (var playlistUri in _playlist) {
+        sources.add(_audioSourceCache[playlistUri]!);
+      }
+      final playlist = ConcatenatingAudioSource(children: sources);
+      await _audioPlayer.setAudioSource(playlist);
+      
+      _saveState();
+      notifyListeners();
+    }
+  }
+
   @override
   void dispose() {
     _audioPlayer.dispose();
@@ -328,4 +394,11 @@ class AudioProvider extends ChangeNotifier {
   Duration get duration => _duration;
   AudioPlayer get audioPlayer => _audioPlayer;
   String get searchQuery => _searchQuery;
+
+  // Update the position notifier when position changes
+  void updatePosition(Duration position) {
+    positionNotifier.value = position;
+    _position = position;
+    notifyListeners();
+  }
 } 
