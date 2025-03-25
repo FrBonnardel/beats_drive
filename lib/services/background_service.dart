@@ -73,9 +73,9 @@ class BackgroundService {
   static final _songStreamController = StreamController<List<Song>>.broadcast();
   static Stream<List<Song>> get songStream => _songStreamController.stream;
   static bool _isScanning = false;
-  static const int _batchSize = 20;
-  static const Duration _batchDelay = Duration(milliseconds: 500);
-  static const int _maxConcurrentOperations = 2;
+  static const int _batchSize = 5;
+  static const Duration _batchDelay = Duration(milliseconds: 200);
+  static const int _maxConcurrentOperations = 1;
   static Isolate? _scanIsolate;
   static ReceivePort? _receivePort;
 
@@ -89,9 +89,11 @@ class BackgroundService {
 
     try {
       _receivePort = ReceivePort();
+      final rootToken = RootIsolateToken.instance!;
+      
       _scanIsolate = await Isolate.spawn(
-        _scanMusicFiles,
-        _receivePort!.sendPort,
+        backgroundHandler,
+        [_receivePort!.sendPort, rootToken],
       );
 
       _receivePort!.listen((message) {
@@ -134,7 +136,7 @@ class BackgroundService {
           break;
         }
 
-        // Convert to Song objects
+        // Convert to Song objects with basic metadata first
         final songs = songsList.map((song) => Song(
           id: song['_id']?.toString() ?? '',
           title: song['title']?.toString() ?? 'Unknown Title',
@@ -156,41 +158,55 @@ class BackgroundService {
         await Future.delayed(_batchDelay);
       }
 
-      // Process metadata and album art in batches
+      // Process metadata and album art in smaller batches with delays
       for (var i = 0; i < allSongs.length; i += _batchSize) {
         final batch = allSongs.sublist(
           i,
           (i + _batchSize).clamp(0, allSongs.length),
         );
 
-        // Process metadata and album art concurrently but with limits
-        final futures = <Future>[];
+        // Process metadata and album art sequentially to reduce load
         for (final song in batch) {
-          if (futures.length >= _maxConcurrentOperations) {
-            await Future.wait(futures);
-            futures.clear();
-          }
-
-          futures.add(_processMetadata(song));
-          futures.add(_processAlbumArt(song));
+          await _processMetadata(song);
+          await Future.delayed(const Duration(milliseconds: 50));
+          await _processAlbumArt(song);
+          await Future.delayed(const Duration(milliseconds: 50));
         }
 
-        await Future.wait(futures);
         await Future.delayed(_batchDelay);
       }
 
       sendPort.send('DONE');
     } catch (e) {
-      debugPrint('Error in background scan: $e');
-      sendPort.send('DONE');
+      debugPrint('BackgroundHandler: Error in background scan: $e');
+      sendPort.send('Error in background scan: $e');
     }
   }
 
-  static Future<Song?> _processMetadata(Song song) async {
+  static Future<void> _processMetadata(Song song) async {
+    try {
+      // Process metadata with low priority
+      await compute(_processMetadataInBackground, song);
+    } catch (e) {
+      debugPrint('Error processing metadata for ${song.title}: $e');
+    }
+  }
+
+  static Future<void> _processAlbumArt(Song song) async {
+    try {
+      // Process album art with low priority
+      await compute(_processAlbumArtInBackground, song);
+    } catch (e) {
+      debugPrint('Error processing album art for ${song.title}: $e');
+    }
+  }
+
+  // Background processing functions
+  static Future<Song> _processMetadataInBackground(Song song) async {
     try {
       final metadata = await MediaStoreService.getSongMetadata(song.uri);
       if (metadata != null) {
-        final updatedSong = song.copyWith(
+        return song.copyWith(
           title: metadata['title']?.toString() ?? song.title,
           artist: metadata['artist']?.toString() ?? song.artist,
           album: metadata['album']?.toString() ?? song.album,
@@ -199,32 +215,30 @@ class BackgroundService {
           trackNumber: metadata['track'] as int? ?? song.trackNumber,
           year: metadata['year'] as int? ?? song.year,
         );
-        return updatedSong;
       }
     } catch (e) {
-      debugPrint('Error processing metadata for ${song.title}: $e');
+      debugPrint('Error processing metadata in background for ${song.title}: $e');
     }
-    return null;
+    return song;
   }
 
-  static Future<Song?> _processAlbumArt(Song song) async {
+  static Future<Song> _processAlbumArtInBackground(Song song) async {
     try {
       final albumArt = await MediaStoreService.getAlbumArt(song.id);
       if (albumArt != null) {
-        final updatedSong = song.copyWith(
+        return song.copyWith(
           albumArtUri: 'memory://${song.id}',
         );
-        return updatedSong;
       }
     } catch (e) {
-      debugPrint('Error processing album art for ${song.title}: $e');
+      debugPrint('Error processing album art in background for ${song.title}: $e');
     }
-    return null;
+    return song;
   }
 
-  static void dispose() {
+  static Future<void> dispose() async {
     _cleanupScan();
-    _songStreamController.close();
+    await _songStreamController.close();
   }
 
   Future<void> initializeService() async {

@@ -4,7 +4,7 @@ import 'package:hive/hive.dart';
 part 'music_models.g.dart';
 
 @HiveType(typeId: 2)
-class Album extends HiveObject {
+class Album {
   @HiveField(0)
   final String id;
 
@@ -36,6 +36,31 @@ class Album extends HiveObject {
   
   String get displayName => name.isEmpty ? 'Unknown Album' : name;
   String get displayArtist => artist.isEmpty ? 'Unknown Artist' : artist;
+
+  // JSON serialization
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'artist': artist,
+      'songs': songs.map((song) => song.toJson()).toList(),
+      'year': year,
+      'albumArtUri': albumArtUri,
+    };
+  }
+
+  factory Album.fromJson(Map<String, dynamic> json) {
+    return Album(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      artist: json['artist'] as String? ?? '',
+      songs: (json['songs'] as List<dynamic>?)
+          ?.map((songJson) => Song.fromJson(songJson as Map<String, dynamic>))
+          .toList() ?? [],
+      year: json['year'] as int?,
+      albumArtUri: json['albumArtUri'] as String?,
+    );
+  }
 }
 
 class Artist {
@@ -195,6 +220,24 @@ class Song {
       dateModified: dateModified ?? this.dateModified,
     );
   }
+
+  factory Song.fromMap(Map<String, dynamic> map) {
+    return Song(
+      id: map['_id']?.toString() ?? '',
+      title: map['title']?.toString() ?? 'Unknown Title',
+      artist: map['artist']?.toString() ?? 'Unknown Artist',
+      album: map['album']?.toString() ?? 'Unknown Album',
+      albumId: map['album_id']?.toString() ?? '',
+      duration: map['duration'] as int? ?? 0,
+      uri: map['_data']?.toString() ?? '',
+      albumArtUri: map['album_art_uri']?.toString() ?? '',
+      trackNumber: map['track'] as int? ?? 0,
+      year: map['year'] as int? ?? 0,
+      dateAdded: map['date_added'] as int? ?? DateTime.now().millisecondsSinceEpoch,
+    );
+  }
+
+  bool get isEmpty => id.isEmpty && title.isEmpty && artist.isEmpty && album.isEmpty;
 }
 
 class Playlist {

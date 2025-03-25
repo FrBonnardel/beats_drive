@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
@@ -10,7 +11,11 @@ import '../providers/music_provider.dart';
 import '../services/cache_service.dart';
 
 class AudioProvider extends ChangeNotifier {
-  final AudioPlayer _audioPlayer = AudioPlayer();
+  AudioPlayer? _audioPlayer;
+  final ValueNotifier<Duration> positionNotifier = ValueNotifier<Duration>(Duration.zero);
+  final Map<String, AudioSource> _audioSourceCache = {};
+  final MusicProvider _musicProvider;
+  
   List<String> _playlist = [];
   int _currentIndex = -1;
   bool _isPlaying = false;
@@ -18,8 +23,6 @@ class AudioProvider extends ChangeNotifier {
   bool _isRepeatEnabled = false;
   final _songChangeController = StreamController<Song?>.broadcast();
   final _currentSongNotifier = ValueNotifier<Song?>(null);
-  final _audioSourceCache = <String, AudioSource>{};
-  late final MusicProvider _musicProvider;
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   String _searchQuery = '';
@@ -31,73 +34,124 @@ class AudioProvider extends ChangeNotifier {
   static const String _isRepeatEnabledKey = 'last_repeat_enabled';
   static const String _positionKey = 'last_position';
   final CacheService _cacheService;
+  Song? _currentSong;
+  String? _currentUri;
+  bool _isLoading = false;
+  bool _isAudioPlayerInitialized = false;
+  Completer<void> _initCompleter = Completer<void>();
 
-  // Add position notifier for isolated updates
-  final ValueNotifier<Duration> positionNotifier = ValueNotifier(Duration.zero);
-
-  // Add getter for position stream
-  Stream<Duration> get positionStream => _audioPlayer.positionStream;
-
-  AudioProvider(this._cacheService) {
-    _musicProvider = MusicProvider(_cacheService);
-    _initProvider();
-    _setupMediaNotificationListeners();
-    _setupAudioPlayer();
-    _restoreState();
+  AudioProvider(this._musicProvider, this._cacheService) {
+    _initializeAudioPlayer();
   }
 
-  Future<void> _initProvider() async {
-    // Removed redundant initialization of _musicProvider
-  }
+  Future<void> _initializeAudioPlayer() async {
+    if (_isAudioPlayerInitialized) return;
 
-  Future<void> _restoreState() async {
     try {
+      // Dispose of any existing player
+      await _audioPlayer?.dispose();
+      _audioPlayer = null;
+
+      // Initialize audio session
+      final session = await AudioSession.instance;
+      await session.configure(const AudioSessionConfiguration.music());
+      
+      // Create audio player with proper configuration
+      _audioPlayer = AudioPlayer(
+        handleInterruptions: true,
+        handleAudioSessionActivation: true,
+      );
+      
+      // Set up audio player
+      _setupAudioPlayer();
+      
+      _isAudioPlayerInitialized = true;
+      if (!_initCompleter.isCompleted) {
+        _initCompleter.complete();
+      }
+      
+      // Load state after initialization
+      await _loadState();
+    } catch (e) {
+      debugPrint('Error initializing audio player: $e');
+      _isAudioPlayerInitialized = false;
+      if (!_initCompleter.isCompleted) {
+        _initCompleter.completeError(e);
+      }
+      // Reset the completer for next attempt
+      _initCompleter = Completer<void>();
+    }
+  }
+
+  Future<void> _loadState() async {
+    try {
+      // Wait for audio player to be initialized
+      while (!_isAudioPlayerInitialized) {
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+
       final prefs = await SharedPreferences.getInstance();
       
       // Restore playlist
-      final playlistJson = prefs.getStringList(_playlistKey);
-      if (playlistJson != null && playlistJson.isNotEmpty) {
-        _playlist = playlistJson;
+      final playlistJson = prefs.getString('playlist');
+      if (playlistJson != null) {
+        final List<dynamic> playlistData = json.decode(playlistJson);
+        _playlist = playlistData.map((uri) => uri as String).toList();
         
-        // Restore current index
-        _currentIndex = prefs.getInt(_currentIndexKey) ?? -1;
-        
-        // Restore playback state
-        _isPlaying = prefs.getBool(_isPlayingKey) ?? false;
-        _isShuffleEnabled = prefs.getBool(_isShuffleEnabledKey) ?? false;
-        _isRepeatEnabled = prefs.getBool(_isRepeatEnabledKey) ?? false;
-        
-        // Restore position
-        final positionMillis = prefs.getInt(_positionKey) ?? 0;
-        _position = Duration(milliseconds: positionMillis);
-
-        // Set up audio source and restore playback
+        // Only proceed if playlist is not empty
         if (_playlist.isNotEmpty) {
-          final sources = <AudioSource>[];
-          for (var uri in _playlist) {
-            if (!_audioSourceCache.containsKey(uri)) {
-              final source = AudioSource.uri(Uri.parse(uri));
-              _audioSourceCache[uri] = source;
-              sources.add(source);
-            }
+          // Restore current index
+          _currentIndex = prefs.getInt('currentIndex') ?? 0;
+          if (_currentIndex >= _playlist.length) {
+            _currentIndex = 0;
           }
-
-          if (sources.isNotEmpty) {
-            final playlist = ConcatenatingAudioSource(children: sources);
-            await _audioPlayer.setAudioSource(playlist);
+          
+          // Restore playback state
+          final wasPlaying = prefs.getBool('wasPlaying') ?? false;
+          
+          // Restore position
+          final position = prefs.getInt('position') ?? 0;
+          
+          // Update current song
+          final uri = _playlist[_currentIndex];
+          final song = await _musicProvider.getSongByUri(uri);
+          if (song != null) {
+            _currentSong = song;
+            _currentSongNotifier.value = song;
+            _songChangeController.add(song);
             
-            // Restore playback position and state
-            if (_currentIndex >= 0) {
-              await _audioPlayer.seek(_position, index: _currentIndex);
-              if (_isPlaying) {
-                await _audioPlayer.play();
-              }
+            // Set position and state
+            await _audioPlayer!.seek(Duration(milliseconds: position));
+            if (wasPlaying) {
+              await _audioPlayer!.play();
+            }
+          } else {
+            debugPrint('AudioProvider: Could not retrieve song metadata for URI: $uri');
+            // Skip this song and move to the next one
+            if (_currentIndex < _playlist.length - 1) {
+              await selectSong(_currentIndex + 1);
+            } else {
+              await stop();
             }
           }
+        } else {
+          // Reset state if playlist is empty
+          _currentIndex = -1;
+          _currentSong = null;
+          _currentSongNotifier.value = null;
+          _songChangeController.add(null);
+          await stop();
         }
       }
     } catch (e) {
-      debugPrint('Error restoring audio state: $e');
+      debugPrint('Error loading state: $e');
+      // Reset state on error
+      _playlist = [];
+      _currentIndex = -1;
+      _currentSong = null;
+      _currentSongNotifier.value = null;
+      _songChangeController.add(null);
+      await stop();
     }
   }
 
@@ -123,16 +177,10 @@ class AudioProvider extends ChangeNotifier {
     }
   }
 
-  void _setupMediaNotificationListeners() {
-    MediaNotificationService.onPlay.listen((_) => play());
-    MediaNotificationService.onPause.listen((_) => pause());
-    MediaNotificationService.onNext.listen((_) => next());
-    MediaNotificationService.onPrevious.listen((_) => previous());
-    MediaNotificationService.onStop.listen((_) => stop());
-  }
-
   void _setupAudioPlayer() {
-    _audioPlayer.playerStateStream.listen((state) {
+    if (_audioPlayer == null) return;
+
+    _audioPlayer!.playerStateStream.listen((state) {
       _isPlaying = state.playing;
       if (state.processingState == ProcessingState.completed) {
         _handleSongCompletion();
@@ -141,27 +189,31 @@ class AudioProvider extends ChangeNotifier {
       notifyListeners();
     });
 
-    _audioPlayer.durationStream.listen((duration) {
+    _audioPlayer!.durationStream.listen((duration) {
       _duration = duration ?? Duration.zero;
       notifyListeners();
     });
 
     // Debounce position updates to reduce UI updates
     Timer? _positionDebounceTimer;
-    _audioPlayer.positionStream.listen((position) {
+    _audioPlayer!.positionStream.listen((position) {
       _position = position;
+      positionNotifier.value = position;  // Update position notifier immediately
+      
       _positionDebounceTimer?.cancel();
-      _positionDebounceTimer = Timer(const Duration(milliseconds: 100), () {
-        _updateMediaNotification();
-        _saveState();
-        notifyListeners();
+      _positionDebounceTimer = Timer(const Duration(milliseconds: 1000), () {  // Increased debounce time
+        if (_isPlaying) {  // Only update notification and save state if playing
+          _updateMediaNotification();
+          _saveState();
+          notifyListeners();
+        }
       });
     });
 
-    _audioPlayer.currentIndexStream.listen((index) async {
+    _audioPlayer!.currentIndexStream.listen((index) async {
       if (index != null && index != _currentIndex) {
         _currentIndex = index;
-        await _updateCurrentSong();
+        unawaited(_updateCurrentSong());  // Update song info in background
         _saveState();
         notifyListeners();
         debugPrint('AudioProvider: Current index changed to: $index');
@@ -170,111 +222,127 @@ class AudioProvider extends ChangeNotifier {
   }
 
   Future<void> _updateCurrentSong() async {
-    if (_currentIndex >= 0 && _currentIndex < _playlist.length) {
-      final uri = _playlist[_currentIndex];
-      try {
-        final song = await _musicProvider.getSongByUri(uri);
+    if (_currentIndex < 0 || _currentIndex >= _playlist.length) {
+      _currentSong = null;
+      _currentSongNotifier.value = null;
+      _songChangeController.add(null);
+      return;
+    }
+    
+    final uri = _playlist[_currentIndex];
+    try {
+      final song = await _musicProvider.getSongByUri(uri);
+      if (song != null) {
+        _currentSong = song;
         _currentSongNotifier.value = song;
         _songChangeController.add(song);
         await _updateMediaNotification();
         debugPrint('AudioProvider: Updated current song: ${song.title}');
-      } catch (e) {
-        debugPrint('Error updating current song: $e');
+      } else {
+        debugPrint('AudioProvider: Could not retrieve song metadata for URI: $uri');
+        // Skip this song and move to the next one
+        if (_currentIndex < _playlist.length - 1) {
+          await selectSong(_currentIndex + 1);
+        } else {
+          await stop();
+        }
+      }
+    } catch (e) {
+      debugPrint('Error updating current song: $e');
+      // Skip this song and move to the next one
+      if (_currentIndex < _playlist.length - 1) {
+        await selectSong(_currentIndex + 1);
+      } else {
+        await stop();
       }
     }
   }
 
   Future<void> _updateMediaNotification() async {
-    final song = _currentSongNotifier.value;
-    if (song != null) {
-      try {
-        await MediaNotificationService.showNotification(
-          title: song.title,
-          author: song.artist,
-          image: null,
-          play: _isPlaying,
-        );
-      } catch (e) {
-        debugPrint('Error updating media notification: $e');
-      }
+    if (_currentSong == null) return;
+    
+    try {
+      final song = _currentSong!;
+      final artwork = await _musicProvider.loadAlbumArt(song.id);
+      
+      // Don't update the audio source here since it's managed by the playlist
+      await _audioPlayer!.setLoopMode(_isRepeatEnabled ? LoopMode.one : LoopMode.off);
+      await _audioPlayer!.setVolume(1.0);
+    } catch (e) {
+      debugPrint('Error updating media notification: $e');
     }
   }
 
   Future<void> play() async {
-    try {
-      if (_playlist.isEmpty) return;
-      
-      if (_currentIndex < 0) {
-        _currentIndex = 0;
+    if (_currentIndex >= 0 && !_isLoading) {
+      try {
+        await _audioPlayer!.play();
+        _isPlaying = true;
+        _saveState();
+        notifyListeners();
+      } catch (e) {
+        debugPrint('Error playing audio: $e');
       }
-      
-      await _audioPlayer.seek(Duration.zero, index: _currentIndex);
-      await _audioPlayer.play();
-      _isPlaying = true;
-      notifyListeners();
-    } catch (e) {
-      debugPrint('Error playing audio: $e');
     }
   }
 
   Future<void> pause() async {
-    try {
-      await _audioPlayer.pause();
-      _isPlaying = false;
-      notifyListeners();
-    } catch (e) {
-      debugPrint('Error pausing audio: $e');
+    if (!_isLoading) {
+      try {
+        await _audioPlayer!.pause();
+        _isPlaying = false;
+        _saveState();
+        notifyListeners();
+      } catch (e) {
+        debugPrint('Error pausing audio: $e');
+      }
     }
   }
 
   Future<void> stop() async {
-    try {
-      await _audioPlayer.stop();
-      _isPlaying = false;
-      await MediaNotificationService.hideNotification();
-      notifyListeners();
-    } catch (e) {
-      debugPrint('Error stopping audio: $e');
+    if (!_isLoading) {
+      try {
+        await _audioPlayer!.stop();
+        _isPlaying = false;
+        _position = Duration.zero;
+        _currentUri = null;
+        _saveState();
+        notifyListeners();
+      } catch (e) {
+        debugPrint('Error stopping audio: $e');
+      }
     }
   }
 
   Future<void> seek(Duration position) async {
-    try {
-      await _audioPlayer.seek(position);
-    } catch (e) {
-      debugPrint('Error seeking audio: $e');
+    if (!_isLoading) {
+      try {
+        await _audioPlayer!.seek(position);
+        _position = position;
+        notifyListeners();
+      } catch (e) {
+        debugPrint('Error seeking audio: $e');
+      }
     }
   }
 
   Future<void> setVolume(double volume) async {
     try {
-      await _audioPlayer.setVolume(volume);
+      await _audioPlayer!.setVolume(volume);
     } catch (e) {
       debugPrint('Error setting volume: $e');
     }
   }
 
   Future<void> previous() async {
-    try {
-      if (_currentIndex > 0) {
-        _currentIndex--;
-        await _audioPlayer.seek(Duration.zero, index: _currentIndex);
-        await _audioPlayer.play();
-      }
-    } catch (e) {
-      debugPrint('Error playing previous song: $e');
+    if (_currentIndex > 0 && !_isLoading) {
+      await selectSong(_currentIndex - 1);
     }
   }
 
   Future<void> next() async {
-    try {
-      if (_currentIndex < _playlist.length - 1) {
-        _currentIndex++;
-        await _audioPlayer.seek(Duration.zero, index: _currentIndex);
-        await _audioPlayer.play();
-      }
-    } catch (e) {
-      debugPrint('Error playing next song: $e');
+    if (_currentIndex < _playlist.length - 1 && !_isLoading) {
+      await selectSong(_currentIndex + 1);
     }
   }
 
@@ -282,76 +350,131 @@ class AudioProvider extends ChangeNotifier {
     _isShuffleEnabled = !_isShuffleEnabled;
     if (_isShuffleEnabled) {
       _shuffledIndices.shuffle();
-      _audioPlayer.setShuffleModeEnabled(true);
+      _audioPlayer!.setShuffleModeEnabled(true);
     } else {
       _shuffledIndices = List.generate(_playlist.length, (index) => index);
-      _audioPlayer.setShuffleModeEnabled(false);
+      _audioPlayer!.setShuffleModeEnabled(false);
     }
     notifyListeners();
   }
 
   void toggleRepeat() {
     _isRepeatEnabled = !_isRepeatEnabled;
-    _audioPlayer.setLoopMode(_isRepeatEnabled ? LoopMode.one : LoopMode.off);
+    _audioPlayer!.setLoopMode(_isRepeatEnabled ? LoopMode.one : LoopMode.off);
     notifyListeners();
   }
 
-  void _handleSongCompletion() async {
+  Future<void> _handleSongCompletion() async {
+    if (_playlist.isEmpty) {
+      await stop();
+      return;
+    }
+
     if (_isRepeatEnabled) {
-      await _audioPlayer.seek(Duration.zero);
-      await _audioPlayer.play();
+      // Replay current song
+      await _audioPlayer!.seek(Duration.zero);
+      await _audioPlayer!.play();
     } else if (_currentIndex < _playlist.length - 1) {
-      await next();
+      // Play next song
+      await selectSong(_currentIndex + 1);
+    } else {
+      // End of playlist
+      await stop();
     }
   }
 
-  Future<void> updatePlaylist(List<String> uris) async {
-    _playlist = List<String>.from(uris);
-    _currentIndex = -1;
-    await _audioPlayer.stop();
-    _audioSourceCache.clear();
-
-    final sources = <AudioSource>[];
-    for (var uri in uris) {
-      if (!_audioSourceCache.containsKey(uri)) {
-        final source = uri.startsWith('content://')
-            ? AudioSource.uri(Uri.parse(uri))
-            : AudioSource.file(uri);
-        _audioSourceCache[uri] = source;
-        sources.add(source);
-      }
+  Future<void> updatePlaylist(List<String> uris, {int? selectedIndex}) async {
+    debugPrint('AudioProvider: Updating playlist with ${uris.length} songs');
+    if (uris.isEmpty) {
+      debugPrint('AudioProvider: Empty playlist, resetting state');
+      _currentIndex = 0;
+      _playlist = [];
+      _currentSong = null;
+      notifyListeners();
+      return;
     }
 
-    if (sources.isNotEmpty) {
-      final playlist = ConcatenatingAudioSource(children: sources);
-      await _audioPlayer.setAudioSource(playlist);
-      _saveState();
-      debugPrint('Successfully set initial audio source with ${sources.length} tracks');
-      
-      // Preload metadata for all songs in the playlist
-      for (var uri in uris) {
-        _musicProvider.getSongByUri(uri).then((song) {
-          debugPrint('AudioProvider: Preloaded metadata for: ${song.title}');
-        });
+    debugPrint('AudioProvider: First URI in new playlist: ${uris.first}');
+    debugPrint('AudioProvider: Last URI in new playlist: ${uris.last}');
+
+    try {
+      // Reset state
+      _currentIndex = 0;
+      _playlist = uris;
+      _currentSong = null;
+      notifyListeners();
+
+      // Create audio sources for each URI
+      final sources = <AudioSource>[];
+      for (final uri in uris) {
+        final song = await _musicProvider.getSongByUri(uri);
+        if (song != null) {
+          debugPrint('AudioProvider: Creating audio source for song: ${song.title}');
+          sources.add(AudioSource.uri(Uri.file(uri)));
+        }
       }
+
+      if (sources.isEmpty) {
+        debugPrint('AudioProvider: No valid sources found');
+        return;
+      }
+
+      debugPrint('AudioProvider: Setting audio source with ${sources.length} tracks');
+      
+      // Set the audio source
+      await _audioPlayer!.setAudioSource(ConcatenatingAudioSource(children: sources));
+      
+      // If we have a selected index, use it
+      if (selectedIndex != null && selectedIndex >= 0 && selectedIndex < sources.length) {
+        debugPrint('AudioProvider: Setting selected index: $selectedIndex');
+        _currentIndex = selectedIndex;
+        await _audioPlayer!.seek(Duration.zero, index: selectedIndex);
+      }
+      
+      await _updateCurrentSong();
+    } catch (e) {
+      debugPrint('AudioProvider: Error updating playlist: $e');
+      _currentIndex = 0;
+      _playlist = [];
+      _currentSong = null;
+      notifyListeners();
     }
   }
 
   Future<void> selectSong(int index) async {
-    if (index < 0 || index >= _playlist.length) return;
+    if (index < 0 || index >= _playlist.length || _isLoading) {
+      debugPrint('AudioProvider: Invalid song selection - index: $index, playlist length: ${_playlist.length}');
+      return;
+    }
 
     try {
+      _isLoading = true;
+      final uri = _playlist[index];
+      debugPrint('AudioProvider: Selecting song at index $index, URI: $uri');
+      
+      // Verify the song exists and has metadata before playing
+      final song = await _musicProvider.getSongByUri(uri);
+      if (song == null) {
+        debugPrint('AudioProvider: Could not retrieve metadata for song at index $index');
+        return;
+      }
+      debugPrint('AudioProvider: Selected song metadata - Title: ${song.title}, Artist: ${song.artist}');
+
+      // Update the current index and song
       _currentIndex = index;
-      final song = await _musicProvider.getSongByUri(_playlist[index]);
+      _currentUri = uri;
+      _currentSong = song;
       _currentSongNotifier.value = song;
       _songChangeController.add(song);
+
+      // Seek to the selected song
+      await _audioPlayer!.seek(Duration.zero, index: index);
       
-      await _audioPlayer.seek(Duration.zero, index: index);
-      await _audioPlayer.play();
-      _saveState();
-      debugPrint('AudioProvider: Selected song: ${song.title}');
+      debugPrint('AudioProvider: Seeking to song at index $index: ${song.title}');
     } catch (e) {
-      debugPrint('Error selecting song: $e');
+      debugPrint('AudioProvider: Error selecting song: $e');
+    } finally {
+      _isLoading = false;
     }
   }
 
@@ -367,7 +490,7 @@ class AudioProvider extends ChangeNotifier {
         sources.add(_audioSourceCache[playlistUri]!);
       }
       final playlist = ConcatenatingAudioSource(children: sources);
-      await _audioPlayer.setAudioSource(playlist);
+      await _audioPlayer!.setAudioSource(playlist);
       
       _saveState();
       notifyListeners();
@@ -376,9 +499,12 @@ class AudioProvider extends ChangeNotifier {
 
   @override
   void dispose() {
-    _audioPlayer.dispose();
+    _audioPlayer?.dispose();
+    _audioPlayer = null;
     _songChangeController.close();
-    MediaNotificationService.hideNotification();
+    _currentSongNotifier.dispose();
+    positionNotifier.dispose();
+    _audioSourceCache.clear();
     super.dispose();
   }
 
@@ -392,7 +518,7 @@ class AudioProvider extends ChangeNotifier {
   ValueNotifier<Song?> get currentSongNotifier => _currentSongNotifier;
   Duration get position => _position;
   Duration get duration => _duration;
-  AudioPlayer get audioPlayer => _audioPlayer;
+  AudioPlayer get audioPlayer => _audioPlayer!;
   String get searchQuery => _searchQuery;
 
   // Update the position notifier when position changes
@@ -401,4 +527,9 @@ class AudioProvider extends ChangeNotifier {
     _position = position;
     notifyListeners();
   }
+
+  Stream<bool> get playingStream => _audioPlayer!.playerStateStream.map((state) => state.playing);
+  
+  // Add positionStream getter
+  Stream<Duration> get positionStream => _audioPlayer!.positionStream;
 } 

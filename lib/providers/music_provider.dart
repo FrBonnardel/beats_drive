@@ -54,14 +54,60 @@ class MusicProvider extends ChangeNotifier {
   SortOption _currentSortOption = SortOption.titleAsc;
   static const _channel = MethodChannel('com.beats_drive/media_store');
   
-  // Add caches
+  // Loading states
+  bool _isInitialLoad = false;
+  bool _isInitialLoadComplete = false;
+  bool _isQuickLoading = false;
+  bool _isQuickLoadComplete = false;
+  bool _isFullScanComplete = false;
+  bool _isScanning = false;
+  String _quickLoadStatus = '';
+  int _loadingProgress = 0;
+  int _totalSongsToLoad = 0;
+  
+  // Pagination state
+  static const int _defaultPageSize = 20;
+  int _currentPage = 0;
+  bool _hasMoreSongs = true;
+  bool _isLoadingMore = false;
+  
+  // Add caches with size limits
+  static const int _maxAlbumArtCacheSize = 50; // Reduced from 100
+  static const int _maxAlbumArtDimension = 300; // Maximum dimension for cached album art
   final Map<String, Uint8List?> _albumArtCache = {};
+  final Map<String, int> _albumArtLastAccess = {}; // Track last access time for LRU eviction
   final Map<String, Song> _songByUriCache = {};
+  final Map<String, ValueNotifier<Uint8List?>> _albumArtNotifiers = {};
+  final Map<String, Future<Uint8List?>> _albumArtLoadingFutures = {}; // Cache loading futures to prevent duplicate loads
+  final Map<String, DateTime> _albumArtLoadTimes = {}; // Track when album art was loaded
+  static const Duration _albumArtCacheDuration = Duration(hours: 24); // How long to keep album art in cache
   bool _isLoading = false;
   bool _hasError = false;
   String? _errorMessage;
   final _backgroundScanCompleter = Completer<void>();
   final _songUpdateController = StreamController<Song>.broadcast();
+  bool _backgroundScanComplete = false;
+
+  // Add getters for loading states
+  bool get isInitialLoad => _isInitialLoad;
+  bool get isInitialLoadComplete => _isInitialLoadComplete;
+  bool get isQuickLoading => _isQuickLoading;
+  bool get isQuickLoadComplete => _isQuickLoadComplete;
+  bool get isFullScanComplete => _isFullScanComplete;
+  int get loadingProgress => _loadingProgress;
+  int get totalSongsToLoad => _totalSongsToLoad;
+
+  // Getters
+  List<Song> get songs => _songs;
+  List<Album> get albums => _albums;
+  List<Artist> get artists => _artists;
+  List<Playlist> get playlists => _playlists;
+  bool get isScanning => _status == MusicScanStatus.scanning;
+  String get error => _error ?? '';
+  String get currentStatus => _currentStatus;
+  bool get isComplete => _isComplete;
+  SortOption get currentSortOption => _currentSortOption;
+  String get quickLoadStatus => _quickLoadStatus;
 
   MusicProvider(this._cacheService) {
     _initializeCache();
@@ -77,60 +123,43 @@ class MusicProvider extends ChangeNotifier {
   void _clearCaches() {
     _albumArtCache.clear();
     _songByUriCache.clear();
+    _albumArtLastAccess.clear();
+    _albumArtLoadingFutures.clear();
+    _albumArtLoadTimes.clear();
   }
 
   // Add method to get song by URI with caching
-  Future<Song> getSongByUri(String uri) async {
-    debugPrint('MusicProvider: Getting song for URI: $uri');
-    
+  Future<Song?> getSongByUri(String uri) async {
     // Check cache first
     if (_songByUriCache.containsKey(uri)) {
-      final cachedSong = _songByUriCache[uri]!;
-      debugPrint('MusicProvider: Found song in cache:');
-      debugPrint('  - Title: ${cachedSong.title}');
-      debugPrint('  - Artist: ${cachedSong.artist}');
-      debugPrint('  - Album: ${cachedSong.album}');
-      debugPrint('  - Album ID: ${cachedSong.albumId}');
-      return cachedSong;
+      return _songByUriCache[uri];
     }
 
     // Try to find song in songs list
     final song = _songs.firstWhereOrNull((s) => s.uri == uri);
     if (song != null) {
-      debugPrint('MusicProvider: Found song in songs list:');
-      debugPrint('  - Title: ${song.title}');
-      debugPrint('  - Artist: ${song.artist}');
-      debugPrint('  - Album: ${song.album}');
-      debugPrint('  - Album ID: ${song.albumId}');
       _songByUriCache[uri] = song;
       return song;
     }
 
-    // If not found, get metadata from MediaStore
-    debugPrint('MusicProvider: Getting metadata from MediaStore for URI: $uri');
+    // Always get metadata from MediaStore
     try {
       final metadata = await MediaStoreService.getSongMetadata(uri);
       
       if (metadata != null) {
         final song = Song(
           id: metadata['_id']?.toString() ?? '',
-          title: metadata['title']?.toString() ?? 'Unknown Title',
-          artist: metadata['artist']?.toString() ?? 'Unknown Artist',
-          album: metadata['album']?.toString() ?? 'Unknown Album',
+          title: metadata['title']?.toString() ?? '',
+          artist: metadata['artist']?.toString() ?? '',
+          album: metadata['album']?.toString() ?? '',
           albumId: metadata['album_id']?.toString() ?? '',
           duration: metadata['duration'] as int? ?? 0,
           uri: uri,
           trackNumber: metadata['track'] as int? ?? 0,
           year: metadata['year'] as int? ?? 0,
-          dateAdded: metadata['date_added'] as int? ?? DateTime.now().millisecondsSinceEpoch,
+          dateAdded: metadata['date_added'] as int? ?? DateTime.now().millisecondsSinceEpoch ~/ 1000,
           albumArtUri: '',
         );
-        
-        debugPrint('MusicProvider: Created song from MediaStore:');
-        debugPrint('  - Title: ${song.title}');
-        debugPrint('  - Artist: ${song.artist}');
-        debugPrint('  - Album: ${song.album}');
-        debugPrint('  - Album ID: ${song.albumId}');
         
         _songByUriCache[uri] = song;
         return song;
@@ -139,24 +168,7 @@ class MusicProvider extends ChangeNotifier {
       debugPrint('Error getting metadata from MediaStore: $e');
     }
 
-    // If all else fails, create a basic song
-    debugPrint('MusicProvider: Creating basic song info for URI: $uri');
-    final basicSong = Song(
-      id: '',
-      title: 'Unknown Title',
-      artist: 'Unknown Artist',
-      album: 'Unknown Album',
-      albumId: '',
-      duration: 0,
-      uri: uri,
-      trackNumber: 0,
-      year: 0,
-      dateAdded: DateTime.now().millisecondsSinceEpoch,
-      albumArtUri: '',
-    );
-    
-    _songByUriCache[uri] = basicSong;
-    return basicSong;
+    return null;
   }
 
   Future<List<Song>> getSongsByUris(List<String> uris) async {
@@ -176,70 +188,54 @@ class MusicProvider extends ChangeNotifier {
       return result;
     }
 
-    // Batch load metadata for uncached songs
-    try {
-      final metadataList = await MediaStoreService.getSongsMetadata(uncachedUris);
-      for (var i = 0; i < uncachedUris.length; i++) {
-        final uri = uncachedUris[i];
-        final metadata = metadataList[i];
+    // Process uncached URIs in smaller batches with longer delays
+    const batchSize = 5; // Reduced batch size
+    for (var i = 0; i < uncachedUris.length; i += batchSize) {
+      final end = (i + batchSize).clamp(0, uncachedUris.length);
+      final batch = uncachedUris.sublist(i, end);
+      
+      try {
+        final metadataList = await MediaStoreService.getSongsMetadata(batch);
         
-        if (metadata != null) {
-          final song = Song(
-            id: metadata['_id']?.toString() ?? '',
-            title: metadata['title']?.toString() ?? 'Unknown Title',
-            artist: metadata['artist']?.toString() ?? 'Unknown Artist',
-            album: metadata['album']?.toString() ?? 'Unknown Album',
-            albumId: metadata['album_id']?.toString() ?? '',
-            duration: metadata['duration'] as int? ?? 0,
-            uri: uri,
-            trackNumber: metadata['track'] as int? ?? 0,
-            year: metadata['year'] as int? ?? 0,
-            dateAdded: metadata['date_added'] as int? ?? DateTime.now().millisecondsSinceEpoch,
-            albumArtUri: '',
-          );
+        // Process each URI in the batch
+        for (var j = 0; j < batch.length; j++) {
+          final uri = batch[j];
+          final metadata = j < metadataList.length ? metadataList[j] : null;
           
-          _songByUriCache[uri] = song;
-          result.add(song);
-        } else {
-          // Create basic song if metadata not found
-          final basicSong = Song(
-            id: '',
-            title: 'Unknown Title',
-            artist: 'Unknown Artist',
-            album: 'Unknown Album',
-            albumId: '',
-            duration: 0,
-            uri: uri,
-            trackNumber: 0,
-            year: 0,
-            dateAdded: DateTime.now().millisecondsSinceEpoch,
-            albumArtUri: '',
-          );
-          _songByUriCache[uri] = basicSong;
-          result.add(basicSong);
+          if (metadata != null) {
+            final song = Song(
+              id: metadata['_id']?.toString() ?? '',
+              title: metadata['title']?.toString() ?? '',
+              artist: metadata['artist']?.toString() ?? '',
+              album: metadata['album']?.toString() ?? '',
+              albumId: metadata['album_id']?.toString() ?? '',
+              duration: metadata['duration'] as int? ?? 0,
+              uri: uri,
+              trackNumber: metadata['track'] as int? ?? 0,
+              year: metadata['year'] as int? ?? 0,
+              dateAdded: metadata['date_added'] as int? ?? DateTime.now().millisecondsSinceEpoch,
+              albumArtUri: '',
+            );
+            
+            _songByUriCache[uri] = song;
+            result.add(song);
+          }
         }
+      } catch (e) {
+        debugPrint('Error batch loading song metadata: $e');
       }
-    } catch (e) {
-      debugPrint('Error batch loading song metadata: $e');
+      
+      // Add a longer delay between batches to prevent UI blocking
+      await Future.delayed(const Duration(milliseconds: 100));
     }
-
+    
     return result;
   }
 
-  // Getters
-  List<Song> get songs => _songs;
-  List<Album> get albums => _albums;
-  List<Artist> get artists => _artists;
-  List<Playlist> get playlists => _playlists;
-  bool get isScanning => _status == MusicScanStatus.scanning;
-  String get error => _error ?? '';
-  String get currentStatus => _currentStatus;
-  bool get isComplete => _isComplete;
-  SortOption get currentSortOption => _currentSortOption;
-
   Future<void> _initializeCache() async {
+    debugPrint('Initializing cache...');
     await _cacheService.initialize();
-    _loadCachedData();
+    await loadFromCache();
   }
 
   Future<void> _loadCachedData() async {
@@ -252,7 +248,10 @@ class MusicProvider extends ChangeNotifier {
   }
 
   Future<bool> requestPermissionAndScan({bool forceRescan = false}) async {
-    if (_status == MusicScanStatus.scanning) return false;
+    if (_status == MusicScanStatus.scanning) {
+      debugPrint('Scan already in progress, skipping...');
+      return false;
+    }
     
     try {
       _status = MusicScanStatus.requestingPermissions;
@@ -332,13 +331,21 @@ class MusicProvider extends ChangeNotifier {
   }
 
   Future<void> scanMusicFiles({bool forceRescan = false}) async {
-    if (_status == MusicScanStatus.scanning) return;
+    if (_status == MusicScanStatus.scanning) {
+      debugPrint('Scan already in progress, skipping...');
+      return;
+    }
+    
+    if (_isFullScanComplete && !forceRescan) {
+      debugPrint('Full scan already completed and not forcing rescan, skipping...');
+      return;
+    }
     
     debugPrint('Starting music scan (forceRescan: $forceRescan)');
     _status = MusicScanStatus.scanning;
     _isComplete = false;
     _error = null;
-    _currentStatus = 'Scanning music files...';
+    _currentStatus = 'Loading music...';
     notifyListeners();
 
     try {
@@ -356,166 +363,109 @@ class MusicProvider extends ChangeNotifier {
           _currentStatus = 'Loaded from cache';
           notifyListeners();
           debugPrint('Successfully loaded ${_songs.length} songs from cache');
+          
+          // Only start background scan if not already scanning and not forcing rescan
+          if (!_isScanning && !forceRescan) {
+            debugPrint('Starting background scan after cache load');
+            unawaited(_startBackgroundScan(forceRescan: false));
+          }
           return;
         }
       }
 
-      // Subscribe to background service results
-      final subscription = BackgroundService.songStream.listen((songs) {
-        debugPrint('Received ${songs.length} songs from background service');
-        _processMusicFiles(songs);
-      }, onError: (error) {
-        debugPrint('Error from background service: $error');
-        _handleError('Failed to scan music files: $error');
-      });
-
-      // Schedule background scan
-      await BackgroundService.scheduleMusicScan();
-
-      // Wait for the first result or timeout after 30 seconds
-      await Future.delayed(const Duration(seconds: 30));
-      subscription.cancel();
-
-      if (_songs.isEmpty) {
-        _handleError('No songs found after scanning');
-      }
-
+      // Start full scan
+      await _startInitialLoad();
     } catch (e) {
       debugPrint('Error scanning music files: $e');
       await _handleError('Failed to scan music files: $e');
     }
   }
 
-  Future<void> _processMusicFiles(List<Song> songs) async {
-    debugPrint('Processing ${songs.length} music files');
-    
-    // Check if the music library has changed
-    final hasChanged = await _cacheService.hasMusicLibraryChanged(songs);
-    if (!hasChanged && !_cacheService.shouldRescan()) {
-      debugPrint('Music library unchanged, using cached data');
-      _songs = _cacheService.getCachedSongs();
-      await _updateCollections();
-      _status = MusicScanStatus.completed;
-      _isComplete = true;
-      _currentStatus = 'Loaded from cache';
-      notifyListeners();
+  Future<void> _startBackgroundScan({bool forceRescan = false}) async {
+    if (_isScanning) {
+      debugPrint('Background scan already in progress, skipping...');
       return;
     }
-
-    _songs = songs;
-    _albums.clear();
-    _artists.clear();
-    _clearCaches();
-
-    // Process files in chunks to avoid UI blocking
-    const chunkSize = 100;
-    final Map<String, Album> albumMap = {};
-    final Map<String, List<Album>> artistAlbums = {};
-
-    // Process chunks in parallel using isolates
-    final chunks = <List<Song>>[];
-    for (var i = 0; i < songs.length; i += chunkSize) {
-      chunks.add(songs.skip(i).take(chunkSize).toList());
+    
+    if (_isFullScanComplete && !forceRescan) {
+      debugPrint('Full scan already completed, skipping...');
+      return;
     }
-
-    // Process each chunk in parallel
-    final results = await Future.wait(
-      chunks.map((chunk) => compute(_processChunk, chunk)),
-    );
-
-    // Combine results
-    for (final result in results) {
-      final chunkAlbumMap = result['albumMap'] as Map<String, Album>;
-      final chunkArtistAlbums = result['artistAlbums'] as Map<String, List<Album>>;
-
-      for (final entry in chunkAlbumMap.entries) {
-        if (!albumMap.containsKey(entry.key)) {
-          albumMap[entry.key] = entry.value;
-        } else {
-          albumMap[entry.key]!.songs.addAll(entry.value.songs);
-        }
-      }
-
-      for (final entry in chunkArtistAlbums.entries) {
-        if (!artistAlbums.containsKey(entry.key)) {
-          artistAlbums[entry.key] = entry.value;
-        } else {
-          artistAlbums[entry.key]!.addAll(entry.value);
-        }
-      }
-    }
-
-    debugPrint('Processed ${_songs.length} songs successfully');
-
-    // Create artists and update collections
-    _albums = albumMap.values.toList();
-    _artists = artistAlbums.entries.map((entry) {
-      final artistName = entry.key;
-      final albums = entry.value;
-      final songs = albums.expand((album) => album.songs).toList();
-      
-      return Artist(
-        id: artistName,
-        name: artistName,
-        albums: albums,
-        songs: songs,
-      );
-    }).toList();
-
-    // Sort everything
-    _sortMusic(_currentSortOption);
-
-    // Cache the processed data
-    await _cacheService.cacheSongs(_songs);
-
-    // Update status
-    _status = MusicScanStatus.completed;
-    _isComplete = true;
-    _currentStatus = 'Scan completed';
+    
+    _isScanning = true;
+    _currentStatus = 'Loading remaining data...';
     notifyListeners();
+    
+    try {
+      // Start background scan
+      final isolate = await Isolate.spawn(_backgroundScanIsolate, {
+        'forceRescan': forceRescan,
+      });
+      
+      // Wait for scan to complete
+      await _backgroundScanCompleter.future;
+      
+      _isFullScanComplete = true;
+      _currentStatus = 'Library scan complete';
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error in background scan: $e');
+      _error = 'Failed to complete background scan: $e';
+      _status = MusicScanStatus.error;
+      notifyListeners();
+    } finally {
+      _isScanning = false;
+    }
   }
 
-  // Process a chunk of songs in a separate isolate
-  static Map<String, dynamic> _processChunk(List<Song> chunk) {
-    final Map<String, Album> albumMap = {};
-    final Map<String, List<Album>> artistAlbums = {};
+  static Future<void> _backgroundScanIsolate(Map<String, dynamic> params) async {
+    try {
+      final forceRescan = params['forceRescan'] as bool;
+      
+      // Perform background scan
+      final songs = await MediaStoreService.getSongsForPage(0, 1000); // Get up to 1000 songs
+      
+      // Process songs in batches
+      const batchSize = 100;
+      for (var i = 0; i < songs.length; i += batchSize) {
+        final end = (i + batchSize < songs.length) ? i + batchSize : songs.length;
+        final batch = songs.sublist(i, end);
+        
+        // Process batch
+        await _processBatchInIsolate(batch);
+        
+        // Add delay to prevent UI blocking
+        await Future.delayed(const Duration(milliseconds: 50));
+      }
+      
+      // Complete the scan
+      Isolate.exit();
+    } catch (e) {
+      debugPrint('Error in background scan isolate: $e');
+      Isolate.exit();
+    }
+  }
 
-    for (final song in chunk) {
+  static Future<void> _processBatchInIsolate(List<Map<String, dynamic>> batch) async {
+    for (final songData in batch) {
       try {
-        // Create or update album
-        final albumKey = '${song.album}_${song.artist}';
-        if (!albumMap.containsKey(albumKey)) {
-          albumMap[albumKey] = Album(
-            id: albumKey,
-            name: song.album,
-            artist: song.artist,
-            songs: [],
-            year: song.year,
-            albumArtUri: song.albumArtUri,
-          );
-        }
-        albumMap[albumKey]!.songs.add(song);
-
-        // Group albums by artist
-        if (!artistAlbums.containsKey(song.artist)) {
-          artistAlbums[song.artist] = [];
-        }
-        if (!artistAlbums[song.artist]!.contains(albumMap[albumKey])) {
-          artistAlbums[song.artist]!.add(albumMap[albumKey]!);
-        }
+        final song = Song.fromMap(songData);
+        // Process song data
+        // Add to cache if needed
       } catch (e) {
-        debugPrint('Error processing music file: $e');
-        continue;
+        debugPrint('Error processing song in batch: $e');
       }
     }
-
-    return {
-      'albumMap': albumMap,
-      'artistAlbums': artistAlbums,
-    };
   }
 
   Future<void> _updateCollections() async {
+    if (_songs.isEmpty) return;
+    
+    // Only update collections if there are significant changes
+    if (_albums.length > 0 && _songs.length == _albums.expand((a) => a.songs).length) {
+      return;
+    }
+
     // Process collections in a separate isolate
     final result = await compute(_processCollections, _songs);
     
@@ -523,7 +473,7 @@ class MusicProvider extends ChangeNotifier {
     _artists = result['artists'] as List<Artist>;
     
     // Sort everything
-    _sortMusic(_currentSortOption);
+    _sortMusic(currentSortOption);
   }
 
   // Process collections in a separate isolate
@@ -705,123 +655,217 @@ class MusicProvider extends ChangeNotifier {
     }
   }
 
-  Future<Uint8List?> loadAlbumArt(String songId) async {
+  Future<Uint8List?> loadAlbumArt(String songId, {bool forceReload = false}) async {
     if (songId.isEmpty) return null;
 
-    // Check memory cache first
-    if (_albumArtCache.containsKey(songId)) {
-      debugPrint('MusicProvider: Found album art in memory cache for song: $songId');
-      return _albumArtCache[songId];
-    }
+    // Update last access time for LRU
+    _albumArtLastAccess[songId] = DateTime.now().millisecondsSinceEpoch;
 
-    // Check disk cache
-    final cachedArt = await _cacheService.getCachedAlbumArt(songId);
-    if (cachedArt != null) {
-      debugPrint('MusicProvider: Found album art in disk cache for song: $songId');
-      final uint8List = Uint8List.fromList(cachedArt);
-      _albumArtCache[songId] = uint8List;
-      return uint8List;
-    }
-
-    // Load from MediaStore
-    try {
-      final song = _songs.firstWhereOrNull((s) => s.id == songId);
-      if (song == null) {
-        debugPrint('MusicProvider: Song not found for ID: $songId');
-        return null;
+    // Check if we need to force reload
+    if (!forceReload) {
+      // Check memory cache first
+      if (_albumArtCache.containsKey(songId)) {
+        final loadTime = _albumArtLoadTimes[songId];
+        if (loadTime != null && DateTime.now().difference(loadTime) < _albumArtCacheDuration) {
+          return _albumArtCache[songId];
+        }
       }
 
-      debugPrint('MusicProvider: Loading album art from MediaStore for song: ${song.title}');
+      // Check if already loading
+      if (_albumArtLoadingFutures.containsKey(songId)) {
+        return _albumArtLoadingFutures[songId];
+      }
+    }
+
+    // Create new loading future
+    final loadingFuture = _loadAlbumArtFromSource(songId, forceReload: forceReload);
+    _albumArtLoadingFutures[songId] = loadingFuture;
+    
+    try {
+      final albumArt = await loadingFuture;
+      if (albumArt != null) {
+        _addToAlbumArtCache(songId, albumArt);
+      }
+      return albumArt;
+    } finally {
+      _albumArtLoadingFutures.remove(songId);
+    }
+  }
+
+  Future<Uint8List?> _loadAlbumArtFromSource(String songId, {bool forceReload = false}) async {
+    try {
+      final song = _songs.firstWhereOrNull((s) => s.id == songId);
+      if (song == null) return null;
+
+      // Check disk cache first if not forcing reload
+      if (!forceReload) {
+        final cachedArt = await _cacheService.getCachedAlbumArt(songId);
+        if (cachedArt != null) {
+          final loadTime = _albumArtLoadTimes[songId];
+          if (loadTime != null && DateTime.now().difference(loadTime) < _albumArtCacheDuration) {
+            return Uint8List.fromList(cachedArt);
+          }
+        }
+      }
+
+      // Load from MediaStore
       final albumArt = await MediaStoreService.getAlbumArt(song.id);
       
       if (albumArt != null) {
-        debugPrint('MusicProvider: Successfully loaded album art from MediaStore');
-        // Cache the album art
-        await _cacheService.cacheAlbumArt(songId, albumArt.toList());
-        _albumArtCache[songId] = albumArt;
-        return albumArt;
-      } else {
-        debugPrint('MusicProvider: No album art found in MediaStore');
-        return null;
+        // Resize image if needed
+        final resizedArt = await _resizeAlbumArt(albumArt);
+        
+        // Cache the resized album art
+        await _cacheService.cacheAlbumArt(songId, resizedArt.toList());
+        return resizedArt;
       }
+      return null;
     } catch (e) {
       debugPrint('Error loading album art: $e');
       return null;
     }
   }
 
-  Future<void> playSong(BuildContext context, Song song) async {
-    final audioProvider = Provider.of<AudioProvider>(context, listen: false);
-    debugPrint('Attempting to play song: ${song.title} (URI: ${song.uri})');
-
-    // Stop any current playback
-    await audioProvider.stop();
-
-    // Load the selected song's metadata first
-    final selectedSong = await getSongByUri(song.uri);
-    audioProvider.currentSongNotifier.value = selectedSong;
-
-    // Get all songs in the current view based on sort option
-    List<Song> currentSongs = List.from(_songs);
-    debugPrint('Total songs in current view: ${currentSongs.length}');
-    _applySorting(currentSongs);
-
-    // Get URIs for all songs
-    final uris = currentSongs.map((s) => s.uri).toList();
-    debugPrint('First few URIs in playlist:');
-    for (var i = 0; i < min(3, uris.length); i++) {
-      debugPrint('[$i]: ${uris[i]}');
-    }
-    
-    // Find the index of the selected song
-    final selectedIndex = currentSongs.indexWhere((s) => s.uri == song.uri);
-    debugPrint('Selected song index: $selectedIndex');
-    
-    if (selectedIndex >= 0) {
-      // Update the playlist with all URIs
-      debugPrint('Updating playlist in AudioProvider...');
-      await audioProvider.updatePlaylist(uris);
+  Future<Uint8List> _resizeAlbumArt(Uint8List originalImage) async {
+    try {
+      final codec = await instantiateImageCodec(originalImage);
+      final frameInfo = await codec.getNextFrame();
       
-      // Play the selected song
-      debugPrint('Playing song at index $selectedIndex');
-      await audioProvider.selectSong(selectedIndex);
-    } else {
-      debugPrint('Error: Could not find selected song in playlist');
+      if (frameInfo.image.width <= _maxAlbumArtDimension && 
+          frameInfo.image.height <= _maxAlbumArtDimension) {
+        return originalImage;
+      }
+
+      final ratio = frameInfo.image.width / frameInfo.image.height;
+      int targetWidth = _maxAlbumArtDimension;
+      int targetHeight = _maxAlbumArtDimension;
+
+      if (ratio > 1) {
+        targetHeight = (_maxAlbumArtDimension / ratio).round();
+      } else {
+        targetWidth = (_maxAlbumArtDimension * ratio).round();
+      }
+
+      final recorder = PictureRecorder();
+      final canvas = Canvas(recorder);
+      final paint = Paint()..filterQuality = FilterQuality.high;
+      
+      canvas.drawImageRect(
+        frameInfo.image,
+        Rect.fromLTWH(0, 0, frameInfo.image.width.toDouble(), frameInfo.image.height.toDouble()),
+        Rect.fromLTWH(0, 0, targetWidth.toDouble(), targetHeight.toDouble()),
+        paint,
+      );
+
+      final picture = recorder.endRecording();
+      final img = await picture.toImage(targetWidth, targetHeight);
+      final byteData = await img.toByteData(format: ImageByteFormat.png);
+      return byteData!.buffer.asUint8List();
+    } catch (e) {
+      debugPrint('Error resizing album art: $e');
+      return originalImage;
     }
   }
 
-  void _applySorting(List<Song> songs) {
-    switch (_currentSortOption) {
-      case SortOption.titleAsc:
-        songs.sort((a, b) => a.title.compareTo(b.title));
-        break;
-      case SortOption.titleDesc:
-        songs.sort((a, b) => b.title.compareTo(a.title));
-        break;
-      case SortOption.artistAsc:
-        songs.sort((a, b) => a.artist.compareTo(b.artist));
-        break;
-      case SortOption.artistDesc:
-        songs.sort((a, b) => b.artist.compareTo(a.artist));
-        break;
-      case SortOption.albumAsc:
-        songs.sort((a, b) => a.album.compareTo(b.album));
-        break;
-      case SortOption.albumDesc:
-        songs.sort((a, b) => b.album.compareTo(a.album));
-        break;
-      case SortOption.dateAddedAsc:
-        songs.sort((a, b) => a.dateAdded.compareTo(b.dateAdded));
-        break;
-      case SortOption.dateAddedDesc:
-        songs.sort((a, b) => b.dateAdded.compareTo(a.dateAdded));
-        break;
-      case SortOption.durationAsc:
-        songs.sort((a, b) => a.duration.compareTo(b.duration));
-        break;
-      case SortOption.durationDesc:
-        songs.sort((a, b) => b.duration.compareTo(a.duration));
-        break;
+  void _addToAlbumArtCache(String songId, Uint8List albumArt) {
+    // Evict oldest items if cache is full
+    while (_albumArtCache.length >= _maxAlbumArtCacheSize) {
+      final oldestSongId = _albumArtLastAccess.entries
+          .reduce((a, b) => a.value < b.value ? a : b)
+          .key;
+      _albumArtCache.remove(oldestSongId);
+      _albumArtLastAccess.remove(oldestSongId);
+      _albumArtLoadTimes.remove(oldestSongId);
+    }
+
+    // Add new item to cache
+    _albumArtCache[songId] = albumArt;
+    _albumArtLastAccess[songId] = DateTime.now().millisecondsSinceEpoch;
+    _albumArtLoadTimes[songId] = DateTime.now();
+  }
+
+  // Add method to preload album art for visible songs
+  Future<void> preloadAlbumArt(List<String> songIds) async {
+    final futures = <Future<void>>[];
+    
+    for (final songId in songIds) {
+      if (!_albumArtCache.containsKey(songId) && 
+          !_albumArtLoadingFutures.containsKey(songId)) {
+        futures.add(loadAlbumArt(songId).then((_) {}));
+      }
+    }
+    
+    // Wait for all preloads to complete
+    await Future.wait(futures);
+  }
+
+  // Add method to clear old album art from cache
+  void _cleanupOldAlbumArt() {
+    final now = DateTime.now();
+    final oldKeys = _albumArtLoadTimes.entries
+        .where((entry) => now.difference(entry.value) > _albumArtCacheDuration)
+        .map((entry) => entry.key)
+        .toList();
+
+    for (final key in oldKeys) {
+      _albumArtCache.remove(key);
+      _albumArtLastAccess.remove(key);
+      _albumArtLoadTimes.remove(key);
+    }
+  }
+
+  // Add method to clear caches when memory pressure is high
+  void clearCaches() {
+    debugPrint('Clearing caches to free memory');
+    _albumArtCache.clear();
+    _albumArtLastAccess.clear();
+    _albumArtLoadingFutures.clear();
+    _songByUriCache.clear();
+    _albumArtNotifiers.clear();
+    _albumArtLoadTimes.clear();
+  }
+
+  // Add getter for album art notifier
+  ValueNotifier<Uint8List?>? getAlbumArtNotifier(String songId) {
+    return _albumArtNotifiers[songId];
+  }
+
+  Future<void> playSong(BuildContext context, Song song) async {
+    final audioProvider = Provider.of<AudioProvider>(context, listen: false);
+    
+    // Stop any current playback
+    await audioProvider.stop();
+
+    // Create a playlist starting with the selected song
+    final selectedIndex = _songs.indexWhere((s) => s.uri == song.uri);
+    if (selectedIndex >= 0) {
+      // Get songs before and after the selected song
+      final visibleRange = 10; // Number of songs before and after current song
+      final startIndex = (selectedIndex - visibleRange).clamp(0, _songs.length);
+      final endIndex = (selectedIndex + visibleRange).clamp(0, _songs.length);
+      
+      // Create playlist with selected song first, followed by surrounding songs
+      final playlist = <Song>[];
+      playlist.add(song); // Add selected song first
+      
+      // Add songs before the selected song
+      for (var i = selectedIndex - 1; i >= startIndex; i--) {
+        playlist.add(_songs[i]);
+      }
+      
+      // Add songs after the selected song
+      for (var i = selectedIndex + 1; i < endIndex; i++) {
+        playlist.add(_songs[i]);
+      }
+      
+      // Get URIs for the playlist
+      final uris = playlist.map((s) => s.uri).toList();
+      
+      // Update the playlist with URIs
+      await audioProvider.updatePlaylist(uris);
+      
+      // Play the first song (which is the selected song)
+      await audioProvider.selectSong(0);
     }
   }
 
@@ -838,75 +882,53 @@ class MusicProvider extends ChangeNotifier {
     await audioProvider.selectSong(0);
   }
 
-  Future<void> loadFromCache() async {
-    debugPrint('Loading songs from cache...');
+  Future<List<Song>> loadFromCache() async {
     try {
-      final cachedSongs = _cacheService.getCachedSongs();
+      final cachedSongs = await _cacheService.getCachedSongs();
       if (cachedSongs.isNotEmpty) {
         _songs = cachedSongs;
-        _updateCollections();
-        _status = MusicScanStatus.completed;
-        _isComplete = true;
-        _currentStatus = 'Loaded from cache';
         notifyListeners();
-        debugPrint('Successfully loaded ${_songs.length} songs from cache');
-        return;
+        return cachedSongs;
       }
-      debugPrint('No songs found in cache');
+      await _startInitialLoad();
+      return [];
     } catch (e) {
       debugPrint('Error loading from cache: $e');
-      _status = MusicScanStatus.error;
-      _error = 'Failed to load cached songs';
-      notifyListeners();
+      await _startInitialLoad();
+      return [];
     }
   }
 
   Stream<Song> get onSongUpdated => _songUpdateController.stream;
 
-  Future<List<Song>> getQuickMediaStoreInfo({int page = 0, int pageSize = 20}) async {
+  Future<List<Song>> getQuickMediaStoreInfo({
+    int page = 0,
+    int pageSize = 20,
+    bool forceRescan = false,
+  }) async {
     try {
-      // First check the cache for this page
-      final cachedSongs = await _cacheService.getCachedSongsForPage(page, pageSize);
-      if (cachedSongs.isNotEmpty) {
-        if (page == 0) {
-          _songs = cachedSongs;
-        } else {
-          _songs.addAll(cachedSongs);
-        }
-        return cachedSongs;
-      }
-
-      // If no cache, get quick info from MediaStore with pagination
       final songsList = await MediaStoreService.getSongsForPage(page, pageSize);
-      
-      final newSongs = songsList.map((song) => Song(
-        id: song['_id']?.toString() ?? '',
-        title: song['title']?.toString() ?? 'Unknown Title',
-        artist: song['artist']?.toString() ?? 'Unknown Artist',
-        album: song['album']?.toString() ?? 'Unknown Album',
-        albumId: song['album_id']?.toString() ?? '',
-        duration: song['duration'] as int? ?? 0,
-        uri: song['_data']?.toString() ?? '',
-        albumArtUri: '',  // Will be loaded lazily
-        trackNumber: song['track'] as int? ?? 0,
-        year: song['year'] as int? ?? 0,
-        dateAdded: song['date_added'] as int? ?? DateTime.now().millisecondsSinceEpoch,
-      )).toList();
+      return songsList.map((song) => Song.fromMap(song)).toList();
+    } catch (e) {
+      debugPrint('Error getting quick media store info: $e');
+      return [];
+    }
+  }
 
-      // Cache the basic song info for this page
-      await _cacheService.cacheSongsForPage(page, newSongs);
-      
-      if (page == 0) {
-        _songs = newSongs;
-      } else {
-        _songs.addAll(newSongs);
-      }
-      
+  Future<List<Song>> loadMoreSongs() async {
+    if (_isLoadingMore || !_hasMoreSongs) {
+      return [];
+    }
+
+    _isLoadingMore = true;
+    try {
+      final nextPage = _currentPage + 1;
+      final newSongs = await getQuickMediaStoreInfo(page: nextPage);
+      _isLoadingMore = false;
       return newSongs;
     } catch (e) {
-      debugPrint('Error getting quick MediaStore info: $e');
-      _hasError = true;
-      _errorMessage = e.toString();
+      _isLoadingMore = false;
+      debugPrint('Error loading more songs: $e');
       return [];
     }
   }
@@ -920,109 +942,176 @@ class MusicProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> startBackgroundScan({
-    int batchSize = 50,
-    Duration delayBetweenBatches = const Duration(milliseconds: 500),
-    int maxConcurrentOperations = 2,
-  }) async {
-    if (_isLoading) return;
-    _isLoading = true;
-
+  Future<List<Song>> getSongsPage(int page, int pageSize) async {
     try {
-      final totalSongs = _songs.length;
-      var processedCount = 0;
-      final batches = <List<Song>>[];
-
-      // Split songs into batches
-      for (var i = 0; i < totalSongs; i += batchSize) {
-        batches.add(_songs.skip(i).take(batchSize).toList());
+      final startIndex = page * pageSize;
+      if (startIndex >= _songs.length) {
+        return [];
       }
-
-      // Process batches with limited concurrency
-      final activeFutures = <Future>[];
       
-      for (final batch in batches) {
-        // Wait if we've reached max concurrent operations
-        while (activeFutures.length >= maxConcurrentOperations) {
-          await Future.wait(activeFutures.take(1));
-          activeFutures.removeAt(0);
-        }
-
-        // Process batch
-        final future = Future(() async {
-          await _processBatch(batch);
-          processedCount += batch.length;
-          
-          // Notify progress
-          debugPrint('Processed $processedCount of $totalSongs songs');
-          
-          // Add delay between batches
-          await Future.delayed(delayBetweenBatches);
-        });
-
-        activeFutures.add(future);
-      }
-
-      // Wait for remaining operations to complete
-      await Future.wait(activeFutures);
-      
-      // Update collections and notify listeners
-      await _updateCollections();
-      _backgroundScanCompleter.complete();
+      final endIndex = (startIndex + pageSize).clamp(0, _songs.length);
+      return _songs.sublist(startIndex, endIndex);
     } catch (e) {
-      debugPrint('Error in background scan: $e');
-      _hasError = true;
-      _errorMessage = e.toString();
+      debugPrint('Error getting songs page: $e');
+      return [];
+    }
+  }
+
+  Future<void> quickLoad() async {
+    if (_isQuickLoading || !_isInitialLoadComplete) {
+      debugPrint('Quick load already in progress or initial load not complete, skipping...');
+      return;
+    }
+    
+    if (_isQuickLoadComplete) {
+      debugPrint('Quick load already completed, skipping...');
+      return;
+    }
+    
+    _isQuickLoading = true;
+    _quickLoadStatus = 'Starting quick load...';
+    notifyListeners();
+    
+    try {
+      // Load first 100 songs quickly for immediate access
+      _quickLoadStatus = 'Quick loading songs...';
+      notifyListeners();
+      
+      const quickLoadSize = 100;
+      final quickSongs = await getQuickMediaStoreInfo(page: 0, pageSize: quickLoadSize);
+      
+      if (quickSongs.isNotEmpty) {
+        _songs = quickSongs;
+        _quickLoadStatus = 'Organizing music collections...';
+        notifyListeners();
+        
+        // Process collections in a separate isolate
+        final result = await compute(_processCollections, _songs);
+        _albums = result['albums'] as List<Album>;
+        _artists = result['artists'] as List<Artist>;
+        
+        // Sort collections
+        _sortMusic(_currentSortOption);
+        
+        _isQuickLoadComplete = true;
+        _quickLoadStatus = 'Quick load complete';
+        notifyListeners();
+        
+        // Cache the processed data
+        await _cacheData();
+        
+        // Start background scan for remaining songs
+        if (!_isFullScanComplete && !_isScanning) {
+          debugPrint('Starting background scan after quick load');
+          unawaited(_startBackgroundScan(forceRescan: false));
+        }
+      } else {
+        _quickLoadStatus = 'No songs found';
+        _isQuickLoadComplete = true;
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Error in quick load: $e');
+      _error = 'Failed to load music: $e';
+      _status = MusicScanStatus.error;
+      notifyListeners();
     } finally {
-      _isLoading = false;
+      _isQuickLoading = false;
+    }
+  }
+
+  Future<void> _cacheData() async {
+    try {
+      await _cacheService.cacheSongs(_songs);
+    } catch (e) {
+      debugPrint('Error caching data: $e');
+    }
+  }
+
+  Future<void> _startInitialLoad() async {
+    if (_isInitialLoad) {
+      debugPrint('Initial load already in progress, skipping...');
+      return;
+    }
+    
+    _isInitialLoad = true;
+    _currentStatus = 'Loading music library...';
+    notifyListeners();
+    
+    try {
+      // Initialize background isolate
+      final rootToken = RootIsolateToken.instance;
+      if (rootToken == null) {
+        throw Exception('Failed to get root isolate token');
+      }
+      BackgroundIsolateBinaryMessenger.ensureInitialized(rootToken);
+      
+      // Get all songs from MediaStore
+      final songs = await MediaStoreService.getSongsForPage(0, 1000); // Get up to 1000 songs
+      
+      // Process songs in batches
+      const batchSize = 50;
+      _totalSongsToLoad = songs.length;
+      _loadingProgress = 0;
+      
+      for (var i = 0; i < songs.length; i += batchSize) {
+        final end = (i + batchSize < songs.length) ? i + batchSize : songs.length;
+        final batch = songs.sublist(i, end);
+        
+        // Process batch
+        await _processBatch(batch);
+        
+        // Update progress
+        _loadingProgress = end;
+        notifyListeners();
+        
+        // Add delay to prevent UI blocking
+        await Future.delayed(const Duration(milliseconds: 50));
+      }
+      
+      // Process collections after all songs are loaded
+      _currentStatus = 'Organizing music collections...';
+      notifyListeners();
+      
+      final result = await compute(_processCollections, _songs);
+      _albums = result['albums'] as List<Album>;
+      _artists = result['artists'] as List<Artist>;
+      
+      // Sort collections
+      _sortMusic(_currentSortOption);
+      
+      // Cache the processed data
+      await _cacheData();
+      
+      _isInitialLoad = false;
+      _isInitialLoadComplete = true;
+      _currentStatus = 'Library loaded successfully';
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error in initial load: $e');
+      _error = 'Failed to load music library: $e';
+      _status = MusicScanStatus.error;
+      _isInitialLoad = false;
       notifyListeners();
     }
   }
 
-  Future<void> _processBatch(List<Song> songs) async {
-    for (final song in songs) {
+  Future<void> _processBatch(List<Map<String, dynamic>> batch) async {
+    for (final songData in batch) {
       try {
-        // Load and cache album art
-        final albumArt = await MediaStoreService.getAlbumArt(song.id);
-        if (albumArt != null) {
-          await _cacheService.cacheAlbumArt(song.id, albumArt.toList());
-          _albumArtCache[song.id] = albumArt;
-        }
-
-        // Load and cache full metadata
-        final metadata = await MediaStoreService.getSongMetadata(song.uri);
-        if (metadata != null) {
-          final updatedSong = song.copyWith(
-            title: metadata['title']?.toString() ?? song.title,
-            artist: metadata['artist']?.toString() ?? song.artist,
-            album: metadata['album']?.toString() ?? song.album,
-            albumId: metadata['album_id']?.toString() ?? song.albumId,
-            duration: metadata['duration'] as int? ?? song.duration,
-            trackNumber: metadata['track'] as int? ?? song.trackNumber,
-            year: metadata['year'] as int? ?? song.year,
-          );
-
-          // Update song in cache
-          _songByUriCache[song.uri] = updatedSong;
-          
-          // Update song in main list
-          final index = _songs.indexWhere((s) => s.id == song.id);
-          if (index != -1) {
-            _songs[index] = updatedSong;
-          }
-
-          // Notify song update
-          _songUpdateController.add(updatedSong);
-        }
+        final song = Song.fromMap(songData);
+        _songs.add(song);
+        _songUpdateController.add(song);
       } catch (e) {
-        debugPrint('Error processing song ${song.title}: $e');
-        continue;
+        debugPrint('Error processing song in batch: $e');
       }
     }
   }
 
   @override
   void dispose() {
+    _cleanupOldAlbumArt();
+    clearCaches();
     _songUpdateController.close();
     super.dispose();
   }

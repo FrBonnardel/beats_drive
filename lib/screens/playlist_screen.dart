@@ -4,9 +4,9 @@ import 'dart:typed_data';
 import '../providers/audio_provider.dart';
 import '../providers/music_provider.dart';
 import '../models/music_models.dart';
-import '../widgets/song_list_item.dart';
-import '../widgets/shared_widgets.dart';
 import '../widgets/song_item.dart';
+import '../widgets/song_options_bottom_sheet.dart';
+import '../widgets/shared_widgets.dart';
 import '../screens/library_screen.dart';
 
 // Static widgets
@@ -167,22 +167,31 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
   bool _isLoading = false;
   bool _hasError = false;
   String? _errorMessage;
+  late AudioProvider _audioProvider;
 
   @override
   void initState() {
     super.initState();
+    _audioProvider = Provider.of<AudioProvider>(context, listen: false);
+    _audioProvider.addListener(_onAudioProviderUpdate);
     _loadInitialSongs();
+  }
+
+  @override
+  void dispose() {
+    _audioProvider.removeListener(_onAudioProviderUpdate);
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onAudioProviderUpdate() {
+    _loadInitialSongs();
+    // Scroll to current song whenever the audio provider updates
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _scrollToCurrentSong();
       }
     });
-  }
-
-  @override
-  void dispose() {
-    _scrollController.dispose();
-    super.dispose();
   }
 
   void _scrollToCurrentSong() {
@@ -192,10 +201,17 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
     final currentIndex = audioProvider.currentIndex;
     
     if (currentIndex != null && currentIndex >= 0) {
-      final itemHeight = 72.0;
-      final offset = currentIndex * itemHeight;
+      final itemHeight = 72.0; // Height of each song item
+      final screenHeight = MediaQuery.of(context).size.height;
+      final appBarHeight = AppBar().preferredSize.height;
+      final topPadding = MediaQuery.of(context).padding.top;
+      
+      // Calculate the target offset that will position the current song at the top
+      // We subtract the app bar height and status bar height to account for the non-scrollable areas
+      final offset = (currentIndex * itemHeight) - (topPadding + appBarHeight);
+      
       _scrollController.animateTo(
-        offset,
+        offset.clamp(0.0, _scrollController.position.maxScrollExtent),
         duration: const Duration(milliseconds: 500),
         curve: Curves.easeInOut,
       );
@@ -212,11 +228,10 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
     });
 
     try {
-      final audioProvider = Provider.of<AudioProvider>(context, listen: false);
       final musicProvider = Provider.of<MusicProvider>(context, listen: false);
 
       // Batch load all songs at once
-      final uris = audioProvider.playlist;
+      final uris = _audioProvider.playlist;
       final songs = await musicProvider.getSongsByUris(uris);
       
       if (mounted) {
@@ -243,7 +258,9 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
     final audioProvider = Provider.of<AudioProvider>(context, listen: false);
     final index = audioProvider.playlist.indexOf(song.uri);
     if (index != -1) {
-      audioProvider.selectSong(index);
+      audioProvider.selectSong(index).then((_) {
+        audioProvider.play();
+      });
     }
   }
 
@@ -306,115 +323,22 @@ class _PlaylistContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return RepaintBoundary(
-      child: ListView.builder(
-        controller: scrollController,
-        itemCount: audioProvider.playlist.length,
-        itemBuilder: (context, index) {
-          final uri = audioProvider.playlist[index];
-          final song = songCache[uri];
-          final isSelected = index == audioProvider.currentIndex;
+    final songs = audioProvider.playlist
+        .map((uri) => songCache[uri])
+        .where((song) => song != null)
+        .cast<Song>()
+        .toList();
 
-          return _SongListItem(
-            uri: uri,
-            song: song,
-            index: index,
-            audioProvider: audioProvider,
-            musicProvider: musicProvider,
-            isSelected: isSelected,
-            onTap: () => onSongTap(song!),
-            onLongPress: () => onSongLongPress(song!),
-          );
-        },
-      ),
-    );
-  }
-}
-
-// Static song list item widget
-class _SongListItem extends StatelessWidget {
-  final String uri;
-  final Song? song;
-  final int index;
-  final AudioProvider audioProvider;
-  final MusicProvider musicProvider;
-  final bool isSelected;
-  final VoidCallback onTap;
-  final VoidCallback onLongPress;
-
-  const _SongListItem({
-    required this.uri,
-    required this.song,
-    required this.index,
-    required this.audioProvider,
-    required this.musicProvider,
-    required this.isSelected,
-    required this.onTap,
-    required this.onLongPress,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: isSelected
-          ? Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3)
-          : null,
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
-        leading: SizedBox(
-          width: 48,
-          height: 48,
-          child: _buildAlbumArt(),
-        ),
-        title: Text(
-          song?.title ?? uri.split('/').last,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: Text(
-          song != null ? '${song!.artist} • ${song!.album}' : 'Loading...',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        onTap: song != null ? onTap : null,
-        onLongPress: song != null ? onLongPress : null,
-      ),
-    );
-  }
-
-  Widget _buildAlbumArt() {
-    if (song == null) return const _AlbumArtPlaceholder();
-
-    return FutureBuilder<Uint8List?>(
-      future: musicProvider.loadAlbumArt(song!.id),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const _AlbumArtLoadingIndicator();
-        }
-        
-        if (snapshot.hasError) {
-          debugPrint('Error loading album art: ${snapshot.error}');
-          return const _AlbumArtPlaceholder();
-        }
-
-        final albumArt = snapshot.data;
-        if (albumArt == null) {
-          return const _AlbumArtPlaceholder();
-        }
-
-        return _AlbumArtContainer(
-          child: Image.memory(
-            albumArt,
-            fit: BoxFit.cover,
-            cacheWidth: 96,
-            cacheHeight: 96,
-            errorBuilder: (context, error, stackTrace) {
-              debugPrint('Error displaying album art: $error');
-              return const _AlbumArtPlaceholder();
-            },
-          ),
-        );
-      },
+    return SongItem(
+      songs: songs,
+      isLoading: false,
+      hasMore: false,
+      onLoadMore: () {},
+      onRetry: () {},
+      onSongTap: onSongTap,
+      onSongLongPress: onSongLongPress,
+      scrollController: scrollController,
+      selectedIndex: audioProvider.currentIndex,
     );
   }
 }

@@ -123,7 +123,7 @@ class _ProgressBarState extends State<_ProgressBar> {
               ),
               child: Slider(
                 value: _currentValue,
-                max: duration.inMilliseconds.toDouble(),
+                max: duration?.inMilliseconds.toDouble() ?? 0.0,
                 onChanged: (value) {
                   setState(() {
                     _currentValue = value;
@@ -152,7 +152,7 @@ class _ProgressBarState extends State<_ProgressBar> {
                     ),
                   ),
                   Text(
-                    _formatDuration(duration),
+                    _formatDuration(duration ?? Duration.zero),
                     style: TextStyle(
                       color: Colors.grey[400],
                       fontSize: 12,
@@ -286,36 +286,40 @@ class PlayerScreen extends StatefulWidget {
 
 class _PlayerScreenState extends State<PlayerScreen> {
   Song? _currentSong;
-  Uint8List? _albumArt;
+  ValueNotifier<Uint8List?>? _albumArtNotifier;
   bool _isLoading = true;
   String? _error;
   Timer? _debounceTimer;
+  late AudioProvider _audioProvider;
+  late MusicProvider _musicProvider;
 
   @override
   void initState() {
     super.initState();
-    _loadCurrentSong();
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final audioProvider = Provider.of<AudioProvider>(context, listen: false);
-    final musicProvider = Provider.of<MusicProvider>(context, listen: false);
+    _audioProvider = Provider.of<AudioProvider>(context, listen: false);
+    _musicProvider = Provider.of<MusicProvider>(context, listen: false);
     
     // Listen to playlist changes
-    audioProvider.addListener(_onPlaylistChanged);
-    musicProvider.addListener(_onMusicProviderChanged);
+    _audioProvider.addListener(_onPlaylistChanged);
+    _musicProvider.addListener(_onMusicProviderChanged);
+    
+    // Load current song after providers are initialized
+    _loadCurrentSong();
   }
 
   @override
   void dispose() {
     _debounceTimer?.cancel();
-    final audioProvider = Provider.of<AudioProvider>(context, listen: false);
-    final musicProvider = Provider.of<MusicProvider>(context, listen: false);
+    _albumArtNotifier?.dispose();
     
-    audioProvider.removeListener(_onPlaylistChanged);
-    musicProvider.removeListener(_onMusicProviderChanged);
+    // Use stored provider references
+    _audioProvider.removeListener(_onPlaylistChanged);
+    _musicProvider.removeListener(_onMusicProviderChanged);
     super.dispose();
   }
 
@@ -334,14 +338,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<void> _loadCurrentSong() async {
     if (!mounted) return;
 
-    final audioProvider = Provider.of<AudioProvider>(context, listen: false);
-    final musicProvider = Provider.of<MusicProvider>(context, listen: false);
-
-    final currentIndex = audioProvider.currentIndex;
-    if (currentIndex == null || currentIndex < 0 || currentIndex >= audioProvider.playlist.length) {
+    final currentIndex = _audioProvider.currentIndex;
+    if (currentIndex < 0 || currentIndex >= _audioProvider.playlist.length) {
       setState(() {
         _currentSong = null;
-        _albumArt = null;
+        _albumArtNotifier?.dispose();
+        _albumArtNotifier = null;
         _isLoading = false;
       });
       return;
@@ -353,15 +355,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
     });
 
     try {
-      final currentUri = audioProvider.playlist[currentIndex];
-      final song = await musicProvider.getSongByUri(currentUri);
+      final currentUri = _audioProvider.playlist[currentIndex];
+      final song = await _musicProvider.getSongByUri(currentUri);
       
       if (mounted) {
         setState(() {
           _currentSong = song;
           _isLoading = false;
         });
-        _loadAlbumArt();
+        await _loadAlbumArt();
       }
     } catch (e) {
       if (mounted) {
@@ -376,21 +378,33 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<void> _loadAlbumArt() async {
     if (_currentSong == null) return;
 
-    final musicProvider = Provider.of<MusicProvider>(context, listen: false);
     try {
-      final albumArt = await musicProvider.loadAlbumArt(_currentSong!.id);
-      if (mounted) {
+      // Get the album art notifier for the current song
+      final notifier = _musicProvider.getAlbumArtNotifier(_currentSong!.id);
+      
+      if (notifier != null) {
+        // Update the notifier reference
         setState(() {
-          _albumArt = albumArt;
+          _albumArtNotifier?.dispose(); // Dispose of old notifier
+          _albumArtNotifier = notifier;
         });
+        
+        // Load album art if not already loaded
+        if (notifier.value == null) {
+          await _musicProvider.loadAlbumArt(_currentSong!.id);
+        }
+      } else {
+        // If no notifier exists, create one and load the album art
+        final albumArt = await _musicProvider.loadAlbumArt(_currentSong!.id);
+        if (mounted) {
+          setState(() {
+            _albumArtNotifier?.dispose();
+            _albumArtNotifier = ValueNotifier<Uint8List?>(albumArt);
+          });
+        }
       }
     } catch (e) {
       debugPrint('Error loading album art: $e');
-      if (mounted) {
-        setState(() {
-          _albumArt = null;
-        });
-      }
     }
   }
 
@@ -406,50 +420,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Widget _buildBody() {
     if (_isLoading) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text('Loading song...'),
-          ],
-        ),
-      );
+      return const Center(child: CircularProgressIndicator());
     }
 
     if (_error != null) {
       return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.error_outline, color: Colors.red, size: 48),
-            const SizedBox(height: 16),
-            Text(
-              _error!,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.red),
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _loadCurrentSong,
-              child: const Text('Retry'),
-            ),
-          ],
+        child: Text(
+          _error!,
+          style: TextStyle(color: Theme.of(context).colorScheme.error),
         ),
       );
     }
 
     if (_currentSong == null) {
       return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.music_note, size: 48),
-            SizedBox(height: 16),
-            Text('No song playing'),
-          ],
-        ),
+        child: Text('No song selected'),
       );
     }
 
@@ -461,18 +446,30 @@ class _PlayerScreenState extends State<PlayerScreen> {
           children: [
             const SizedBox(height: 32),
             _AlbumArtContainer(
-              child: _albumArt != null
-                  ? Image.memory(
-                      _albumArt!,
-                      fit: BoxFit.cover,
-                      cacheWidth: 300,
-                      cacheHeight: 300,
-                      errorBuilder: (context, error, stackTrace) {
-                        debugPrint('Error displaying album art: $error');
-                        return const _AlbumArtPlaceholder();
-                      },
-                    )
-                  : const _AlbumArtPlaceholder(),
+              child: ValueListenableBuilder<Uint8List?>(
+                valueListenable: _albumArtNotifier ?? ValueNotifier<Uint8List?>(null),
+                builder: (context, albumArt, child) {
+                  if (albumArt == null) {
+                    // Try to load album art if not loaded
+                    if (_currentSong != null) {
+                      _musicProvider.loadAlbumArt(_currentSong!.id);
+                    }
+                    return const _AlbumArtPlaceholder();
+                  }
+                  return Image.memory(
+                    albumArt,
+                    fit: BoxFit.cover,
+                    width: 300,
+                    height: 300,
+                    cacheWidth: 300,
+                    cacheHeight: 300,
+                    errorBuilder: (context, error, stackTrace) {
+                      debugPrint('Error displaying album art: $error');
+                      return const _AlbumArtPlaceholder();
+                    },
+                  );
+                },
+              ),
             ),
             const SizedBox(height: 32),
             _SongInfoContainer(
@@ -481,9 +478,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
               album: _currentSong!.album,
             ),
             const SizedBox(height: 24),
-            _ProgressBar(audioProvider: Provider.of<AudioProvider>(context)),
+            _ProgressBar(audioProvider: _audioProvider),
             const SizedBox(height: 16),
-            _PlayerControls(audioProvider: Provider.of<AudioProvider>(context)),
+            _PlayerControls(audioProvider: _audioProvider),
           ],
         ),
       ),

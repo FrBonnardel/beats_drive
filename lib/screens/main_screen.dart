@@ -6,115 +6,6 @@ import '../screens/player_screen.dart';
 import '../screens/playlist_screen.dart';
 import '../screens/library_screen.dart';
 import '../widgets/mini_player.dart';
-import '../widgets/shared_widgets.dart';
-
-// Static widgets
-class _MainAppBar extends StatelessWidget implements PreferredSizeWidget {
-  final VoidCallback onPlaylistPressed;
-
-  const _MainAppBar({required this.onPlaylistPressed});
-
-  @override
-  Widget build(BuildContext context) {
-    return AppBar(
-      title: const Text('Now Playing'),
-      actions: [
-        IconButton(
-          icon: const Icon(Icons.playlist_play),
-          onPressed: onPlaylistPressed,
-        ),
-      ],
-    );
-  }
-
-  @override
-  Size get preferredSize => const Size.fromHeight(kToolbarHeight);
-}
-
-// Static navigation bar
-class _MainNavigationBar extends StatelessWidget {
-  final int currentIndex;
-  final ValueChanged<int> onDestinationSelected;
-
-  const _MainNavigationBar({
-    required this.currentIndex,
-    required this.onDestinationSelected,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return NavigationBar(
-      selectedIndex: currentIndex,
-      onDestinationSelected: onDestinationSelected,
-      destinations: const [
-        NavigationDestination(
-          icon: Icon(Icons.library_music_outlined),
-          selectedIcon: Icon(Icons.library_music),
-          label: 'Library',
-        ),
-        NavigationDestination(
-          icon: Icon(Icons.play_circle_outline),
-          selectedIcon: Icon(Icons.play_circle),
-          label: 'Player',
-        ),
-        NavigationDestination(
-          icon: Icon(Icons.playlist_play_outlined),
-          selectedIcon: Icon(Icons.playlist_play),
-          label: 'Playlist',
-        ),
-      ],
-    );
-  }
-}
-
-// Static screen container with RepaintBoundary
-class _ScreenContainer extends StatelessWidget {
-  final Widget child;
-
-  const _ScreenContainer({required this.child});
-
-  @override
-  Widget build(BuildContext context) {
-    return RepaintBoundary(
-      child: child,
-    );
-  }
-}
-
-// Static screens list
-class _ScreensList extends StatelessWidget {
-  final List<Widget> screens;
-
-  const _ScreensList({required this.screens});
-
-  @override
-  Widget build(BuildContext context) {
-    return RepaintBoundary(
-      child: Stack(
-        children: screens,
-      ),
-    );
-  }
-}
-
-// Dynamic mini player container
-class _DynamicMiniPlayer extends StatelessWidget {
-  final int currentIndex;
-
-  const _DynamicMiniPlayer({required this.currentIndex});
-
-  @override
-  Widget build(BuildContext context) {
-    if (currentIndex == 1) return const SizedBox.shrink();
-
-    return const Positioned(
-      left: 0,
-      right: 0,
-      bottom: 0,
-      child: MiniPlayer(),
-    );
-  }
-}
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -124,18 +15,17 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
-  late final List<Widget> _screens;
   int _selectedIndex = 0;
   final GlobalKey<LibraryScreenState> _libraryScreenKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
-    _screens = [
-      LibraryScreen(key: _libraryScreenKey),
-      const PlayerScreen(),
-      const PlaylistScreen(),
-    ];
+    // Start quick loading when the screen is created
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final musicProvider = Provider.of<MusicProvider>(context, listen: false);
+      musicProvider.quickLoad();
+    });
   }
 
   void _onDestinationSelected(int index) {
@@ -149,12 +39,6 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  void _showSearchDialog() {
-    if (_selectedIndex == 0) {
-      _libraryScreenKey.currentState?.showSearchDialog();
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -163,12 +47,14 @@ class _MainScreenState extends State<MainScreen> {
         actions: [
           if (_selectedIndex == 0) ...[
             IconButton(
-              icon: const Icon(Icons.search),
-              onPressed: _showSearchDialog,
-            ),
-            IconButton(
               icon: const Icon(Icons.sort),
               onPressed: _showSortDialog,
+            ),
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: () {
+                _libraryScreenKey.currentState?.refresh();
+              },
             ),
           ],
           if (_selectedIndex == 2) ...[
@@ -197,17 +83,54 @@ class _MainScreenState extends State<MainScreen> {
       ),
       body: Stack(
         children: [
-          IndexedStack(
-            index: _selectedIndex,
-            children: _screens,
+          Column(
+            children: [
+              Expanded(
+                child: IndexedStack(
+                  index: _selectedIndex,
+                  children: [
+                    LibraryScreen(key: _libraryScreenKey),
+                    const PlayerScreen(),
+                    const PlaylistScreen(),
+                  ],
+                ),
+              ),
+              if (_selectedIndex != 1) // Don't show MiniPlayer on PlayerScreen
+                const MiniPlayer(),
+            ],
           ),
-          if (_selectedIndex != 1) // Don't show MiniPlayer on PlayerScreen
-            const Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: MiniPlayer(),
-            ),
+          // Add loading overlay
+          Consumer<MusicProvider>(
+            builder: (context, musicProvider, child) {
+              if (!musicProvider.isInitialLoad && !musicProvider.isQuickLoading) {
+                return const SizedBox.shrink();
+              }
+              
+              return Positioned.fill(
+                child: Material(
+                  color: Theme.of(context).colorScheme.surface.withOpacity(0.9),
+                  child: SafeArea(
+                    child: Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const CircularProgressIndicator(),
+                          const SizedBox(height: 16),
+                          Text(
+                            musicProvider.isInitialLoad 
+                                ? 'Loading music library... (${musicProvider.loadingProgress} of ${musicProvider.totalSongsToLoad})'
+                                : musicProvider.quickLoadStatus,
+                            style: Theme.of(context).textTheme.titleMedium,
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
         ],
       ),
       bottomNavigationBar: NavigationBar(

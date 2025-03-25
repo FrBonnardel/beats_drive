@@ -6,50 +6,65 @@ import '../services/cache_service.dart';
 
 class ArtistItem extends StatelessWidget {
   final Artist artist;
+  final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
+  final bool isSelected;
 
   const ArtistItem({
     Key? key,
     required this.artist,
+    this.onTap,
+    this.onLongPress,
+    this.isSelected = false,
   }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        AspectRatio(
-          aspectRatio: 1,
-          child: Container(
-            decoration: BoxDecoration(
+    return Container(
+      color: isSelected
+          ? Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3)
+          : null,
+      child: ListTile(
+        key: ValueKey(artist.id),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+        leading: SizedBox(
+          width: 56,
+          height: 56,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: Container(
               color: Colors.grey[800],
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
               child: const Icon(Icons.person, color: Colors.white70),
             ),
           ),
         ),
-        const SizedBox(height: 8),
-        Text(
+        title: Text(
           artist.displayName,
-          style: const TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 16,
-          ),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
-        Text(
+        subtitle: Text(
           '${artist.totalAlbums} albums • ${artist.totalSongs} songs',
-          style: TextStyle(
-            color: Colors.grey[600],
-            fontSize: 14,
-          ),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
-      ],
+        trailing: Text(
+          _formatDuration(artist.songs.fold(0, (sum, song) => sum + song.duration)),
+          style: TextStyle(
+            color: Colors.grey[400],
+            fontSize: 12,
+          ),
+        ),
+        onTap: onTap,
+        onLongPress: onLongPress,
+      ),
     );
+  }
+
+  String _formatDuration(int milliseconds) {
+    final duration = Duration(milliseconds: milliseconds);
+    final minutes = duration.inMinutes;
+    final seconds = (duration.inSeconds % 60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
   }
 } 

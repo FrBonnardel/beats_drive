@@ -157,35 +157,34 @@ class _AlbumArtBuilder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<Uint8List?>(
-      future: musicProvider.loadAlbumArt(songId),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
+    final notifier = musicProvider.getAlbumArtNotifier(songId);
+    if (notifier == null) {
+      return const _AlbumArtPlaceholder();
+    }
+
+    return ValueListenableBuilder<Uint8List?>(
+      valueListenable: notifier,
+      builder: (context, albumArt, child) {
+        if (albumArt == null) {
+          // Load album art if not already loaded
+          musicProvider.loadAlbumArt(songId);
           return const _AlbumArtLoadingIndicator();
         }
-        if (snapshot.hasError) {
-          debugPrint('Error loading album art: ${snapshot.error}');
-        }
-        return _buildAlbumArt(snapshot.data);
+
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: Image.memory(
+            albumArt,
+            fit: BoxFit.cover,
+            cacheWidth: 100,
+            cacheHeight: 100,
+            errorBuilder: (context, error, stackTrace) {
+              debugPrint('Error displaying album art: $error');
+              return const _AlbumArtPlaceholder();
+            },
+          ),
+        );
       },
-    );
-  }
-
-  Widget _buildAlbumArt(Uint8List? albumArt) {
-    if (albumArt == null) return const _AlbumArtPlaceholder();
-
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(4),
-      child: Image.memory(
-        albumArt,
-        fit: BoxFit.cover,
-        cacheWidth: 100,
-        cacheHeight: 100,
-        errorBuilder: (context, error, stackTrace) {
-          debugPrint('Error displaying album art: $error');
-          return const _AlbumArtPlaceholder();
-        },
-      ),
     );
   }
 }

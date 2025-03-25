@@ -13,6 +13,7 @@ class PaginatedGridList<T> extends StatefulWidget {
   final int crossAxisCount;
   final bool isList;
   final double? childAspectRatio;
+  final ScrollController? scrollController;
 
   const PaginatedGridList({
     Key? key,
@@ -28,6 +29,7 @@ class PaginatedGridList<T> extends StatefulWidget {
     this.error,
     this.isList = false,
     this.childAspectRatio,
+    this.scrollController,
   }) : super(key: key);
 
   @override
@@ -35,17 +37,20 @@ class PaginatedGridList<T> extends StatefulWidget {
 }
 
 class _PaginatedGridListState<T> extends State<PaginatedGridList<T>> {
-  final ScrollController _scrollController = ScrollController();
+  late final ScrollController _scrollController;
 
   @override
   void initState() {
     super.initState();
+    _scrollController = widget.scrollController ?? ScrollController();
     _scrollController.addListener(_onScroll);
   }
 
   @override
   void dispose() {
-    _scrollController.dispose();
+    if (widget.scrollController == null) {
+      _scrollController.dispose();
+    }
     super.dispose();
   }
 
