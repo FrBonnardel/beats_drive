@@ -1,4 +1,4 @@
-package com.beats_drive
+package com.beatsdrive
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -117,31 +117,29 @@ class MediaNotificationService : Service() {
     }
 
     private fun createNotification(): Notification {
-        Log.d("MediaNotificationService", "Creating notification with content intent")
+        Log.d(TAG, "Creating notification with content intent")
         // Create intent to open the app
-        val contentIntent = Intent(this, FlutterActivity::class.java).apply {
+        val contentIntent = Intent(this, Class.forName("com.beatsdrive.MainActivity")).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or 
                     Intent.FLAG_ACTIVITY_CLEAR_TOP or 
                     Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                    Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED or
-                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                    Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
             action = ACTION_NOTIFICATION_CLICK
-            addCategory(Intent.CATEGORY_LAUNCHER)
+            addCategory(Intent.CATEGORY_DEFAULT)
         }
-        Log.d("MediaNotificationService", "Content intent created with action: ${contentIntent.action}")
+        Log.d(TAG, "Content intent created with action: ${contentIntent.action}")
         
         val contentPendingIntent = PendingIntent.getActivity(
             this,
             0,
             contentIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        Log.d("MediaNotificationService", "Content pending intent created")
+        Log.d(TAG, "Content pending intent created")
 
         // Create intents for media controls targeting the service
         val playPauseIntent = Intent(this, MediaNotificationService::class.java).apply {
             action = if (isPlaying) ACTION_PAUSE else ACTION_PLAY
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val playPausePendingIntent = PendingIntent.getService(
             this,
@@ -152,7 +150,6 @@ class MediaNotificationService : Service() {
 
         val nextIntent = Intent(this, MediaNotificationService::class.java).apply {
             action = ACTION_NEXT
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val nextPendingIntent = PendingIntent.getService(
             this,
@@ -163,7 +160,6 @@ class MediaNotificationService : Service() {
 
         val previousIntent = Intent(this, MediaNotificationService::class.java).apply {
             action = ACTION_PREVIOUS
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val previousPendingIntent = PendingIntent.getService(
             this,
@@ -189,14 +185,18 @@ class MediaNotificationService : Service() {
             .addAction(android.R.drawable.ic_media_next, "Next", nextPendingIntent)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
-            .setAutoCancel(false)  // Prevent notification from being dismissed when clicking controls
+            .setAutoCancel(false)
+            .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
 
         currentImage?.let { imageData ->
             val bitmap = BitmapFactory.decodeByteArray(imageData, 0, imageData.size)
             builder.setLargeIcon(bitmap)
         }
 
-        return builder.build()
+        val notification = builder.build()
+        Log.d(TAG, "Notification created successfully")
+        return notification
     }
 
     fun hideNotification() {
@@ -244,6 +244,7 @@ class MediaNotificationService : Service() {
     }
 
     companion object {
+        private const val TAG = "MediaNotificationService"
         private const val CHANNEL_ID = "media_playback_channel"
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL = "com.beats_drive/media_notification"

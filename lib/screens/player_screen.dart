@@ -53,17 +53,23 @@ class _PlayerControls extends StatelessWidget {
           icon: const Icon(Icons.skip_previous),
           onPressed: audioProvider.previous,
         ),
-        IconButton(
-          icon: Icon(
-            audioProvider.isPlaying ? Icons.pause : Icons.play_arrow,
-            size: 48,
-          ),
-          onPressed: () {
-            if (audioProvider.isPlaying) {
-              audioProvider.pause();
-            } else {
-              audioProvider.play();
-            }
+        StreamBuilder<bool>(
+          stream: audioProvider.playingStream,
+          builder: (context, snapshot) {
+            final isPlaying = snapshot.data ?? audioProvider.isPlaying;
+            return IconButton(
+              icon: Icon(
+                isPlaying ? Icons.pause : Icons.play_arrow,
+                size: 48,
+              ),
+              onPressed: () {
+                if (isPlaying) {
+                  audioProvider.pause();
+                } else {
+                  audioProvider.play();
+                }
+              },
+            );
           },
         ),
         IconButton(

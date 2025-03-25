@@ -48,38 +48,42 @@ class AudioProvider extends ChangeNotifier {
     if (_isAudioPlayerInitialized) return;
 
     try {
-      // Dispose of any existing player
-      await _audioPlayer?.dispose();
-      _audioPlayer = null;
-
       // Initialize audio session
       final session = await AudioSession.instance;
-      await session.configure(const AudioSessionConfiguration.music());
+      await session.configure(const AudioSessionConfiguration(
+        avAudioSessionCategory: AVAudioSessionCategory.playback,
+        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.mixWithOthers,
+        avAudioSessionMode: AVAudioSessionMode.defaultMode,
+        avAudioSessionRouteSharingPolicy: AVAudioSessionRouteSharingPolicy.defaultPolicy,
+        avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.none,
+        androidAudioAttributes: AndroidAudioAttributes(
+          contentType: AndroidAudioContentType.music,
+          usage: AndroidAudioUsage.media,
+        ),
+        androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
+        androidWillPauseWhenDucked: true,
+      ));
+
+      // Initialize audio player
+      _audioPlayer = AudioPlayer();
       
-      // Create audio player with proper configuration
-      _audioPlayer = AudioPlayer(
-        handleInterruptions: true,
-        handleAudioSessionActivation: true,
-      );
+      // Initialize media notification service
+      await MediaNotificationService.initialize();
       
-      // Set up audio player
+      // Set up media notification listeners
+      MediaNotificationService.onPlay.listen((_) => play());
+      MediaNotificationService.onPause.listen((_) => pause());
+      MediaNotificationService.onNext.listen((_) => next());
+      MediaNotificationService.onPrevious.listen((_) => previous());
+      
+      // Set up audio player listeners
       _setupAudioPlayer();
       
       _isAudioPlayerInitialized = true;
-      if (!_initCompleter.isCompleted) {
-        _initCompleter.complete();
-      }
-      
-      // Load state after initialization
-      await _loadState();
+      _initCompleter.complete();
     } catch (e) {
       debugPrint('Error initializing audio player: $e');
-      _isAudioPlayerInitialized = false;
-      if (!_initCompleter.isCompleted) {
-        _initCompleter.completeError(e);
-      }
-      // Reset the completer for next attempt
-      _initCompleter = Completer<void>();
+      _initCompleter.completeError(e);
     }
   }
 
@@ -186,6 +190,8 @@ class AudioProvider extends ChangeNotifier {
         _handleSongCompletion();
       }
       _saveState();
+      // Update notification when playback state changes
+      _updateMediaNotification();
       notifyListeners();
     });
 
@@ -265,6 +271,14 @@ class AudioProvider extends ChangeNotifier {
       final song = _currentSong!;
       final artwork = await _musicProvider.loadAlbumArt(song.id);
       
+      // Show media notification with song info and artwork
+      await MediaNotificationService.showNotification(
+        title: song.title,
+        author: song.artist,
+        image: artwork,
+        play: _isPlaying,
+      );
+      
       // Don't update the audio source here since it's managed by the playlist
       await _audioPlayer!.setLoopMode(_isRepeatEnabled ? LoopMode.one : LoopMode.off);
       await _audioPlayer!.setVolume(1.0);
@@ -300,17 +314,18 @@ class AudioProvider extends ChangeNotifier {
   }
 
   Future<void> stop() async {
-    if (!_isLoading) {
-      try {
-        await _audioPlayer!.stop();
-        _isPlaying = false;
-        _position = Duration.zero;
-        _currentUri = null;
-        _saveState();
-        notifyListeners();
-      } catch (e) {
-        debugPrint('Error stopping audio: $e');
-      }
+    try {
+      await _audioPlayer!.stop();
+      _isPlaying = false;
+      _currentIndex = -1;
+      _position = Duration.zero;
+      _saveState();
+      notifyListeners();
+      
+      // Hide media notification when stopping
+      await MediaNotificationService.hideNotification();
+    } catch (e) {
+      debugPrint('Error stopping playback: $e');
     }
   }
 

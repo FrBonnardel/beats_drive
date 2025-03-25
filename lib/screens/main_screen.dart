@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'dart:async';
 import '../providers/audio_provider.dart';
 import '../providers/music_provider.dart';
 import '../screens/player_screen.dart';
 import '../screens/playlist_screen.dart';
 import '../screens/library_screen.dart';
 import '../widgets/mini_player.dart';
+import '../services/media_notification_service.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -17,15 +19,41 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
   final GlobalKey<LibraryScreenState> _libraryScreenKey = GlobalKey();
+  StreamSubscription? _notificationClickSubscription;
 
   @override
   void initState() {
     super.initState();
+    debugPrint('MainScreen: Initializing...');
+    
     // Start quick loading when the screen is created
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      debugPrint('MainScreen: Post frame callback - starting quick load');
       final musicProvider = Provider.of<MusicProvider>(context, listen: false);
       musicProvider.quickLoad();
     });
+
+    // Listen for notification clicks
+    debugPrint('MainScreen: Setting up notification click listener');
+    _notificationClickSubscription = MediaNotificationService.onNotificationClick.listen((_) {
+      debugPrint('MainScreen: Notification clicked, current index: $_selectedIndex');
+      if (!mounted) {
+        debugPrint('MainScreen: Widget not mounted, cannot handle notification click');
+        return;
+      }
+      debugPrint('MainScreen: Navigating to player screen (index 1)');
+      setState(() => _selectedIndex = 1); // Switch to player screen
+      debugPrint('MainScreen: Navigation complete, new index: $_selectedIndex');
+    });
+    debugPrint('MainScreen: Notification click listener setup complete');
+  }
+
+  @override
+  void dispose() {
+    debugPrint('MainScreen: Disposing...');
+    _notificationClickSubscription?.cancel();
+    debugPrint('MainScreen: Notification click subscription cancelled');
+    super.dispose();
   }
 
   void _onDestinationSelected(int index) {

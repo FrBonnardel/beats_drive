@@ -2,17 +2,19 @@ package com.beats_drive
 
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
 import com.beats_drive.MediaStorePlugin
+import androidx.annotation.NonNull
 
 class MainActivity: FlutterActivity() {
     private val CHANNEL = "com.beats_drive/media_notification"
-    private lateinit var methodChannel: MethodChannel
+    private lateinit var channel: MethodChannel
 
-    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+    override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         
         // Cache the FlutterEngine for use by the service
@@ -21,13 +23,14 @@ class MainActivity: FlutterActivity() {
         // Register MediaStorePlugin
         flutterEngine.plugins.add(MediaStorePlugin())
 
-        methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
-        methodChannel.setMethodCallHandler { call, result ->
+        channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
+        channel.setMethodCallHandler { call, result ->
             when (call.method) {
                 "showNotification" -> {
                     val title = call.argument<String>("title") ?: ""
                     val author = call.argument<String>("author") ?: ""
-                    val image = call.argument<ByteArray>("image")
+                    val imageList = call.argument<List<Int>>("image")
+                    val image = imageList?.map { it.toByte() }?.toByteArray()
                     val play = call.argument<Boolean>("play") ?: true
 
                     val intent = Intent(this, MediaNotificationService::class.java).apply {
@@ -55,19 +58,43 @@ class MainActivity: FlutterActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        when (intent.action) {
+        Log.d("MainActivity", "onNewIntent called with action: ${intent.action}")
+        setIntent(intent)  // Update the intent with the new one
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        Log.d("MainActivity", "Handling intent with action: ${intent?.action}")
+        when (intent?.action) {
             MediaNotificationService.ACTION_PLAY -> {
-                methodChannel.invokeMethod("onPlay", null)
+                Log.d("MainActivity", "Handling PLAY action")
+                channel.invokeMethod("onPlay", null)
             }
             MediaNotificationService.ACTION_PAUSE -> {
-                methodChannel.invokeMethod("onPause", null)
+                Log.d("MainActivity", "Handling PAUSE action")
+                channel.invokeMethod("onPause", null)
             }
             MediaNotificationService.ACTION_NEXT -> {
-                methodChannel.invokeMethod("onNext", null)
+                Log.d("MainActivity", "Handling NEXT action")
+                channel.invokeMethod("onNext", null)
             }
             MediaNotificationService.ACTION_PREVIOUS -> {
-                methodChannel.invokeMethod("onPrevious", null)
+                Log.d("MainActivity", "Handling PREVIOUS action")
+                channel.invokeMethod("onPrevious", null)
+            }
+            MediaNotificationService.ACTION_NOTIFICATION_CLICK -> {
+                Log.d("MainActivity", "Notification click detected, invoking method channel")
+                channel.invokeMethod("onNotificationClick", null)
+            }
+            else -> {
+                Log.d("MainActivity", "No specific action to handle")
             }
         }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        Log.d("MainActivity", "onCreate called with intent action: ${intent?.action}")
+        handleIntent(intent)
     }
 } 
