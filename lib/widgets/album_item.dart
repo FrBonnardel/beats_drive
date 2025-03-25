@@ -45,7 +45,9 @@ class AlbumItem extends StatelessWidget {
                       builder: (context, albumArt, child) {
                         if (albumArt == null) {
                           // Load album art if not already loaded
-                          musicProvider.loadAlbumArt(album.songs.first.id);
+                          if (album.songs.isNotEmpty) {
+                            musicProvider.loadAlbumArt(album.songs.first.id);
+                          }
                           return const Icon(Icons.album, color: Colors.white70);
                         }
                         return Image.memory(

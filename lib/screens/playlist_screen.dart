@@ -172,6 +172,7 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
   @override
   void initState() {
     super.initState();
+    debugPrint('PlaylistScreen: Initializing...');
     _audioProvider = Provider.of<AudioProvider>(context, listen: false);
     _audioProvider.addListener(_onAudioProviderUpdate);
     _loadInitialSongs();
@@ -179,26 +180,49 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
 
   @override
   void dispose() {
+    debugPrint('PlaylistScreen: Disposing...');
     _audioProvider.removeListener(_onAudioProviderUpdate);
     _scrollController.dispose();
     super.dispose();
   }
 
   void _onAudioProviderUpdate() {
-    _loadInitialSongs();
-    // Scroll to current song whenever the audio provider updates
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (!mounted) {
+      debugPrint('PlaylistScreen: Widget not mounted, skipping update');
+      return;
+    }
+    
+    debugPrint('PlaylistScreen: Audio provider updated');
+    debugPrint('PlaylistScreen: Current playlist length: ${_audioProvider.playlist.length}');
+    debugPrint('PlaylistScreen: Current song index: ${_audioProvider.currentIndex}');
+    
+    // Clear the song cache to force a reload
+    _songCache.clear();
+    debugPrint('PlaylistScreen: Song cache cleared');
+    
+    // Load songs and scroll to current song
+    _loadInitialSongs().then((_) {
       if (mounted) {
-        _scrollToCurrentSong();
+        debugPrint('PlaylistScreen: Songs loaded, scrolling to current song');
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _scrollToCurrentSong();
+        });
+      } else {
+        debugPrint('PlaylistScreen: Widget not mounted after loading songs');
       }
     });
   }
 
   void _scrollToCurrentSong() {
-    if (!_scrollController.hasClients) return;
+    if (!_scrollController.hasClients) {
+      debugPrint('PlaylistScreen: Scroll controller has no clients, cannot scroll');
+      return;
+    }
     
     final audioProvider = Provider.of<AudioProvider>(context, listen: false);
     final currentIndex = audioProvider.currentIndex;
+    
+    debugPrint('PlaylistScreen: Attempting to scroll to index: $currentIndex');
     
     if (currentIndex != null && currentIndex >= 0) {
       final itemHeight = 72.0; // Height of each song item
@@ -207,20 +231,27 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
       final topPadding = MediaQuery.of(context).padding.top;
       
       // Calculate the target offset that will position the current song at the top
-      // We subtract the app bar height and status bar height to account for the non-scrollable areas
       final offset = (currentIndex * itemHeight) - (topPadding + appBarHeight);
+      
+      debugPrint('PlaylistScreen: Scrolling to offset: $offset');
       
       _scrollController.animateTo(
         offset.clamp(0.0, _scrollController.position.maxScrollExtent),
         duration: const Duration(milliseconds: 500),
         curve: Curves.easeInOut,
       );
+    } else {
+      debugPrint('PlaylistScreen: Invalid current index: $currentIndex');
     }
   }
 
   Future<void> _loadInitialSongs() async {
-    if (!mounted) return;
+    if (!mounted) {
+      debugPrint('PlaylistScreen: Widget not mounted, skipping load');
+      return;
+    }
 
+    debugPrint('PlaylistScreen: Starting to load songs');
     setState(() {
       _isLoading = true;
       _hasError = false;
@@ -229,21 +260,47 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
 
     try {
       final musicProvider = Provider.of<MusicProvider>(context, listen: false);
-
-      // Batch load all songs at once
       final uris = _audioProvider.playlist;
-      final songs = await musicProvider.getSongsByUris(uris);
       
-      if (mounted) {
-        setState(() {
-          for (var i = 0; i < uris.length; i++) {
-            _songCache[uris[i]] = songs[i];
-          }
-          _isLoading = false;
-        });
+      debugPrint('PlaylistScreen: Current playlist URIs: ${uris.length}');
+      if (uris.isEmpty) {
+        debugPrint('PlaylistScreen: No URIs in playlist');
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
+        return;
       }
+
+      debugPrint('PlaylistScreen: Loading songs for URIs...');
+      final songs = await musicProvider.getSongsByUris(uris);
+      debugPrint('PlaylistScreen: Loaded ${songs.length} songs');
+      
+      if (!mounted) {
+        debugPrint('PlaylistScreen: Widget not mounted after loading songs');
+        return;
+      }
+
+      // Verify that we have the correct number of songs
+      if (songs.length != uris.length) {
+        debugPrint('PlaylistScreen: Warning - Number of songs (${songs.length}) does not match number of URIs (${uris.length})');
+      }
+      
+      setState(() {
+        _songCache.clear(); // Clear existing cache
+        for (var i = 0; i < uris.length; i++) {
+          if (i < songs.length) {
+            _songCache[uris[i]] = songs[i];
+          } else {
+            debugPrint('PlaylistScreen: Warning - Missing song for URI: ${uris[i]}');
+          }
+        }
+        _isLoading = false;
+      });
+      debugPrint('PlaylistScreen: Updated song cache with ${_songCache.length} songs');
     } catch (e) {
-      debugPrint('Error loading playlist: $e');
+      debugPrint('PlaylistScreen: Error loading playlist: $e');
       if (mounted) {
         setState(() {
           _hasError = true;
@@ -255,16 +312,23 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
   }
 
   void _handleSongTap(Song song) {
+    debugPrint('PlaylistScreen: Song tapped - ${song.title}');
     final audioProvider = Provider.of<AudioProvider>(context, listen: false);
     final index = audioProvider.playlist.indexOf(song.uri);
+    debugPrint('PlaylistScreen: Song index in playlist: $index');
+    
     if (index != -1) {
+      debugPrint('PlaylistScreen: Selecting and playing song at index $index');
       audioProvider.selectSong(index).then((_) {
         audioProvider.play();
       });
+    } else {
+      debugPrint('PlaylistScreen: Song not found in playlist');
     }
   }
 
   void _handleSongLongPress(Song song) {
+    debugPrint('PlaylistScreen: Song long pressed - ${song.title}');
     showModalBottomSheet(
       context: context,
       builder: (context) => SongOptionsBottomSheet(song: song),
@@ -273,9 +337,11 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
 
   @override
   Widget build(BuildContext context) {
+    debugPrint('PlaylistScreen: Building with ${_songCache.length} cached songs');
     return Consumer2<AudioProvider, MusicProvider>(
       builder: (context, audioProvider, musicProvider, child) {
         if (_hasError) {
+          debugPrint('PlaylistScreen: Showing error view');
           return _ErrorView(
             message: _errorMessage ?? 'An error occurred',
             onRetry: _loadInitialSongs,
@@ -283,13 +349,16 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
         }
 
         if (_isLoading) {
+          debugPrint('PlaylistScreen: Showing loading indicator');
           return const _LoadingIndicator();
         }
 
         if (audioProvider.playlist.isEmpty) {
+          debugPrint('PlaylistScreen: Showing empty playlist view');
           return const _EmptyPlaylistView();
         }
 
+        debugPrint('PlaylistScreen: Showing playlist content');
         return _PlaylistContent(
           songCache: _songCache,
           audioProvider: audioProvider,

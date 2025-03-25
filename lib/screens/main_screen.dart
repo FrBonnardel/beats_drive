@@ -30,6 +30,7 @@ class _MainScreenState extends State<MainScreen> {
 
   void _onDestinationSelected(int index) {
     if (index == _selectedIndex) return;
+    debugPrint('MainScreen: Navigation - Switching from screen ${_getScreenName(_selectedIndex)} to ${_getScreenName(index)}');
     setState(() => _selectedIndex = index);
   }
 
@@ -164,6 +165,19 @@ class _MainScreenState extends State<MainScreen> {
         return 'Playlist';
       default:
         return 'Beats Drive';
+    }
+  }
+
+  String _getScreenName(int index) {
+    switch (index) {
+      case 0:
+        return 'Library';
+      case 1:
+        return 'Now Playing';
+      case 2:
+        return 'Playlist';
+      default:
+        return 'Unknown';
     }
   }
 } 

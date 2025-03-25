@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/music_models.dart';
@@ -20,6 +21,9 @@ class ArtistItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final musicProvider = Provider.of<MusicProvider>(context);
+    final notifier = artist.songs.isNotEmpty ? musicProvider.getAlbumArtNotifier(artist.songs.first.id) : null;
+
     return Container(
       color: isSelected
           ? Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3)
@@ -34,7 +38,28 @@ class ArtistItem extends StatelessWidget {
             borderRadius: BorderRadius.circular(4),
             child: Container(
               color: Colors.grey[800],
-              child: const Icon(Icons.person, color: Colors.white70),
+              child: notifier == null
+                  ? const Icon(Icons.person, color: Colors.white70)
+                  : ValueListenableBuilder<Uint8List?>(
+                      valueListenable: notifier,
+                      builder: (context, albumArt, child) {
+                        if (albumArt == null) {
+                          // Load album art if not already loaded
+                          if (artist.songs.isNotEmpty) {
+                            musicProvider.loadAlbumArt(artist.songs.first.id);
+                          }
+                          return const Icon(Icons.person, color: Colors.white70);
+                        }
+                        return Image.memory(
+                          albumArt,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            debugPrint('Error displaying album art: $error');
+                            return const Icon(Icons.person, color: Colors.white70);
+                          },
+                        );
+                      },
+                    ),
             ),
           ),
         ),

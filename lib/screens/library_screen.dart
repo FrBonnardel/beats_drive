@@ -795,12 +795,44 @@ class LibraryScreenState extends State<LibraryScreen> with SingleTickerProviderS
   }
 
   void _handleAlbumTap(Album album) {
+    debugPrint('LibraryScreen: Album tapped - Name: ${album.name}, Artist: ${album.artist}');
+    debugPrint('LibraryScreen: Album contains ${album.songs.length} songs');
+    
+    // Remove duplicate songs based on URI
+    final uniqueSongs = album.songs.fold<List<Song>>([], (list, song) {
+      if (!list.any((s) => s.uri == song.uri)) {
+        list.add(song);
+      }
+      return list;
+    });
+    
+    debugPrint('LibraryScreen: After removing duplicates, album has ${uniqueSongs.length} unique songs');
+    
+    if (uniqueSongs.isEmpty) {
+      debugPrint('LibraryScreen: No valid songs found in album');
+      return;
+    }
+    
     final audioProvider = Provider.of<AudioProvider>(context, listen: false);
-    // Create a new playlist with all songs from the album
-    final playlist = album.songs.map((song) => song.uri).toList();
-    audioProvider.updatePlaylist(playlist);
-    audioProvider.selectSong(0);
-    audioProvider.play();
+    debugPrint('LibraryScreen: Current playlist before album update: ${audioProvider.playlist.length} songs');
+    debugPrint('LibraryScreen: Current song index before album update: ${audioProvider.currentIndex}');
+    
+    // Create a new playlist with unique songs from the album
+    final playlist = uniqueSongs.map((song) => song.uri).toList();
+    debugPrint('LibraryScreen: Created new playlist with ${playlist.length} unique songs');
+    debugPrint('LibraryScreen: First song in playlist: ${uniqueSongs.first.title}');
+    debugPrint('LibraryScreen: Last song in playlist: ${uniqueSongs.last.title}');
+    
+    debugPrint('LibraryScreen: Updating audio provider playlist...');
+    audioProvider.updatePlaylist(playlist).then((_) {
+      debugPrint('LibraryScreen: Playlist updated successfully');
+      debugPrint('LibraryScreen: New playlist length: ${audioProvider.playlist.length}');
+      debugPrint('LibraryScreen: Starting playback from first song');
+      audioProvider.selectSong(0).then((_) {
+        debugPrint('LibraryScreen: Song selected at index 0');
+        audioProvider.play();
+      });
+    });
   }
 
   void _handleAlbumLongPress(Album album) {
@@ -808,12 +840,45 @@ class LibraryScreenState extends State<LibraryScreen> with SingleTickerProviderS
   }
 
   void _handleArtistTap(Artist artist) {
+    debugPrint('LibraryScreen: Artist tapped - Name: ${artist.name}');
+    debugPrint('LibraryScreen: Artist has ${artist.songs.length} songs');
+    debugPrint('LibraryScreen: Artist has ${artist.albums.length} albums');
+    
+    // Remove duplicate songs based on URI
+    final uniqueSongs = artist.songs.fold<List<Song>>([], (list, song) {
+      if (!list.any((s) => s.uri == song.uri)) {
+        list.add(song);
+      }
+      return list;
+    });
+    
+    debugPrint('LibraryScreen: After removing duplicates, artist has ${uniqueSongs.length} unique songs');
+    
+    if (uniqueSongs.isEmpty) {
+      debugPrint('LibraryScreen: No valid songs found for artist');
+      return;
+    }
+    
     final audioProvider = Provider.of<AudioProvider>(context, listen: false);
-    // Create a new playlist with all songs from the artist
-    final playlist = artist.songs.map((song) => song.uri).toList();
-    audioProvider.updatePlaylist(playlist);
-    audioProvider.selectSong(0);
-    audioProvider.play();
+    debugPrint('LibraryScreen: Current playlist before artist update: ${audioProvider.playlist.length} songs');
+    debugPrint('LibraryScreen: Current song index before artist update: ${audioProvider.currentIndex}');
+    
+    // Create a new playlist with unique songs from the artist
+    final playlist = uniqueSongs.map((song) => song.uri).toList();
+    debugPrint('LibraryScreen: Created new playlist with ${playlist.length} unique songs');
+    debugPrint('LibraryScreen: First song in playlist: ${uniqueSongs.first.title}');
+    debugPrint('LibraryScreen: Last song in playlist: ${uniqueSongs.last.title}');
+    
+    debugPrint('LibraryScreen: Updating audio provider playlist...');
+    audioProvider.updatePlaylist(playlist).then((_) {
+      debugPrint('LibraryScreen: Playlist updated successfully');
+      debugPrint('LibraryScreen: New playlist length: ${audioProvider.playlist.length}');
+      debugPrint('LibraryScreen: Starting playback from first song');
+      audioProvider.selectSong(0).then((_) {
+        debugPrint('LibraryScreen: Song selected at index 0');
+        audioProvider.play();
+      });
+    });
   }
 
   void _handleArtistLongPress(Artist artist) {
